@@ -3169,10 +3169,10 @@ def test_a_config_derived_help_is_refused_before_the_serve_parser_sees_it(
 
 
 def test_a_parser_diagnostic_does_not_echo_config_values(tmp_path, capsys):
-    """Values are attached to flags, so argparse quotes them back verbatim.
+    """The flag name identifies the mistake; the value it carried is not needed.
 
-    A typo'd key is by definition on no sensitive-key list, so every value is
-    masked and the flag name -- what identifies the mistake -- is kept.
+    A typo'd key is by definition on no sensitive-key list, so no config value
+    can be assumed safe to print.
     """
     config_path = tmp_path / "serve-config.json"
     config_path.write_text(
@@ -3220,14 +3220,15 @@ def test_the_config_is_still_blamed_for_a_failure_that_is_its_own(tmp_path, caps
     assert "componentss" in stderr
 
 
-def test_value_redaction_leaves_flag_only_diagnostics_alone():
-    """`invalid int value: 'abc'` names no `--flag=value`, so it is untouched."""
-    plain = "argument --port: invalid int value: 'not-a-number'"
-    assert server_config._redact_config_values(plain) == plain
+def test_a_config_error_reports_flag_names_and_no_values():
+    """The unit the whole no-leak posture rests on: names in, values dropped."""
     assert (
-        server_config._redact_config_values("unrecognized arguments: --a=b --c=d")
-        == "unrecognized arguments: --a=*** --c=***"
+        server_config._config_flag_names(
+            ["--otel-auth-token=s3cret", "--components=a,b", "--otel-verbose"]
+        )
+        == "--components, --otel-auth-token, --otel-verbose"
     )
+    assert server_config._config_flag_names([]) == "(none)"
 
 
 def test_a_generate_key_naming_a_serve_flag_is_refused(tmp_path, capsys):
@@ -3259,27 +3260,38 @@ def test_an_ordinary_generate_key_is_untouched_by_that_check(tmp_path):
     assert generate_argv == ["--components=apigateway"]
 
 
-def test_redaction_masks_a_value_however_the_parser_echoes_it():
-    """Argparse quotes a value with no flag attached, and values contain spaces.
+@pytest.mark.parametrize(
+    "name,body",
+    [
+        # Argparse quotes the value back with no flag attached.
+        ("float", json.dumps({"generate": {"otel_stream_speedup": "s3cret"}})),
+        # A value containing whitespace is not one argv token.
+        ("spaced", json.dumps({"generate": {"componentss": "s3cret and more"}})),
+        # A value containing a newline survives any per-line pass.
+        ("multiline", json.dumps({"generate": {"componentss": "top\ns3cret"}})),
+        # The serve parser owns --port and rejects it before generate sees it.
+        ("serve-owned", json.dumps({"server": {"port": "s3cret"}})),
+        # A malformed file: the parse error quotes the offending region.
+        ("malformed", '{"server": {"auth_token": "s3cret"'),
+    ],
+)
+def test_no_config_refusal_ever_prints_a_config_value(tmp_path, capsys, name, body):
+    """The structural property that replaced masking.
 
-    A pattern over the message catches neither, so the literal config values
-    are masked directly.
+    Masking was a pattern over the parser's message and leaked every time a new
+    shape turned up -- an unattached value, whitespace, a newline, a file-level
+    parse error quoting the source. Nothing derived from a config *value* is
+    put in an error now, so each of these is closed by construction rather than
+    by another case in a regex.
     """
-    values = server_config._argv_value_literals(
-        ["--otel-stream-speedup=s3cret", "--x=has space here"]
-    )
-    assert (
-        server_config._redact_config_values(
-            "argument --otel-stream-speedup: invalid float value: 's3cret'", values
-        )
-        == "argument --otel-stream-speedup: invalid float value: '***'"
-    )
-    assert (
-        server_config._redact_config_values(
-            "unrecognized arguments: --x=has space here", values
-        )
-        == "unrecognized arguments: --x=***"
-    )
+    config_path = tmp_path / f"serve-config-{name}.json"
+    config_path.write_text(body, encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises((SystemExit, ValueError)) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    reported = capsys.readouterr().err + str(excinfo.value)
+    assert str(config_path) in reported
+    assert "s3cret" not in reported
 
 
 def test_a_bad_overridden_server_value_fails_the_combined_parse_anyway(tmp_path):

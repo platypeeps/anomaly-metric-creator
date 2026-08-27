@@ -124,7 +124,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "imports; +18 from 06-29-persisted-server-mutation-state for the "
         "--persist-mutations flag, its config-allowlist key, and the startup "
         "refusal around the existing build_state() call, later narrowed to "
-        "match PERSIST_ERROR_PREFIX; net -120 from "
+        "match PERSIST_ERROR_PREFIX; net -118 from "
         "07-02-config-generate-key-validation, which found this module at 2096 "
         "and left it here. That task grew the --config cluster until every "
         "review round needed a ceiling bump, then took the remedy this entry "

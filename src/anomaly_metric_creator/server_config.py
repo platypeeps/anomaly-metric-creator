@@ -21,7 +21,6 @@ import argparse
 import contextlib
 import io
 import json
-import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -76,7 +75,9 @@ def _load_serve_config(path: Path) -> dict[str, Any]:
         raise _config_error(path, f"failed to read file: {exc}") from exc
     except parse_exc_types as exc:
         label = "YAML" if is_yaml else "JSON"
-        raise _config_error(path, f"failed to parse {label}: {exc}") from exc
+        raise _config_error(
+            path, f"failed to parse {label}: {_parse_failure_detail(exc)}"
+        ) from exc
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):
@@ -164,6 +165,32 @@ def _strip_serve_config_arg(argv: list[str]) -> list[str]:
     return result
 
 
+def _parse_failure_detail(exc: Exception) -> str:
+    """Where a config file failed to parse, never what it said there.
+
+    ``str()`` on a YAML or JSON parse error quotes the offending region of the
+    file back -- PyYAML prints a source snippet, and both carry the surrounding
+    text. A config holds secrets (``auth_token`` is an allowlisted server key),
+    so the position and the parser's own generic complaint go into the error
+    and the file's bytes do not. The operator has the file; a line and column
+    is what they need from us.
+    """
+    mark = getattr(exc, "problem_mark", None)
+    problem = getattr(exc, "problem", None)
+    if mark is not None:
+        where = f"line {mark.line + 1}, column {mark.column + 1}"
+        return f"{problem or 'invalid syntax'} at {where}"
+    lineno = getattr(exc, "lineno", None)
+    if lineno is not None:
+        colno = getattr(exc, "colno", None)
+        where = f"line {lineno}" + (f", column {colno}" if colno is not None else "")
+        return f"{getattr(exc, 'msg', None) or 'invalid syntax'} at {where}"
+    # UnicodeDecodeError, and any YAML error carrying no mark. Its str() is
+    # about the encoding or the parser state, not the file's content, but it
+    # is not worth a special case: the class name says enough.
+    return type(exc).__name__
+
+
 def _config_error(config_path: Path | None, detail: str) -> ValueError:
     """Build the shared ``--config`` diagnostic so every arm names the file."""
     prefix = f"--config {config_path}: " if config_path is not None else "--config: "
@@ -211,51 +238,29 @@ def _resolve_generate_parse_args(legacy_module: Any | None = None) -> Callable[.
     return legacy_module.parse_args
 
 
-_CONFIG_ARGV_VALUE = re.compile(r"(--[A-Za-z0-9][A-Za-z0-9-]*)=\S+")
+def _config_flag_names(argv: list[str]) -> str:
+    """The flag names in `argv`, without their values.
 
-
-def _argv_value_literals(argv: list[str]) -> tuple[str, ...]:
-    """Every config-supplied value in `argv`, longest first.
-
-    Longest first so a value that contains a shorter one is masked whole
-    rather than leaving a fragment behind.
+    Nothing derived from a config *value* reaches an error message. Masking
+    values was tried first and kept leaking: argparse echoes a value in more
+    forms than the one it was written in (`invalid float value: 's3cret'` has
+    no flag attached), a value containing a newline survives a per-line pass,
+    and which key holds a secret is not knowable here -- a typo'd key is by
+    definition on no allowlist. Naming only the flags closes the whole class by
+    construction instead of by pattern, and the flag name is what identifies
+    the mistake anyway.
     """
-    values = {
-        token.split("=", 1)[1] for token in argv if token.startswith("--") and "=" in token
-    }
-    return tuple(sorted((value for value in values if value), key=len, reverse=True))
+    names = sorted({token.split("=", 1)[0] for token in argv if token.startswith("--")})
+    return ", ".join(names) if names else "(none)"
 
 
-def _redact_config_values(diagnostic: str, values: tuple[str, ...] = ()) -> str:
-    """Mask config-supplied values a parser echoed back.
-
-    Which keys hold secrets is not knowable here -- a typo'd key is by
-    definition on no list -- so every config value is masked and the flag name,
-    which is what identifies the mistake, is kept.
-
-    Masking the literal values is what makes this reliable. Argparse echoes a
-    value in more forms than the one it was written in: `invalid float value:
-    's3cret'` quotes it with no flag attached, and a value containing a space
-    is not one whitespace-delimited token. A pattern over the message catches
-    neither. The `--flag=value` substitution stays as a second pass, for a
-    parser that echoes a token this function was not handed.
-    """
-    for value in values:
-        diagnostic = diagnostic.replace(value, "***")
-    return _CONFIG_ARGV_VALUE.sub(r"\1=***", diagnostic)
-
-
-def _argv_diagnostic(
-    stderr: str,
-    exc: SystemExit,
-    parser_name: str,
-    values: tuple[str, ...] = (),
-) -> str:
-    """Last stderr line, redacted -- or a fallback naming the exit status."""
-    lines = [line for line in stderr.strip().splitlines() if line]
-    if not lines:
-        return f"{parser_name} exited with status {exc.code}"
-    return _redact_config_values(lines[-1], values)
+def _rerun_hint(command: str) -> str:
+    """Point the operator at the parser's own message without repeating it."""
+    return (
+        f" Run the {command} command directly with those flags to see the "
+        "parser's own message; it is not repeated here, because a parser "
+        "diagnostic quotes config values back and any of them may be a secret."
+    )
 
 
 def _generate_argv_parses(
@@ -374,15 +379,16 @@ def _probe_config_generate_argv(
         # A successful exit is not a rejection: `help: true` makes argparse
         # print usage and stop. Reporting that as "rejected by the parser"
         # names the wrong problem, and the stderr is empty, so the arm below
-        # would surface a bare "exited with status 0".
+        # would name flags for a parse that did not actually reject them.
         raise _config_error(
             config_path,
             "generate section made the parser print output and exit "
             "successfully instead of producing a configuration -- a key like "
             "'help' or 'version' does this. Remove it.",
         ) from own_exit
-    values = _argv_value_literals(generate_argv)
-    own_diagnostic = _argv_diagnostic(own_stderr, own_exit, "generate parser", values)
+    # Compared, never reported. The comparison decides whether the config is to
+    # blame; nothing from it reaches the message.
+    own_diagnostic = own_stderr.strip()
     if merged_argv is not None:
         merged = _generate_argv_parses(merged_argv, parse_args)
         if merged is None:
@@ -394,11 +400,8 @@ def _probe_config_generate_argv(
             # fine. Refusing on the section alone would reject a working
             # configuration, which the probe is not allowed to do.
             return
-        merged_exit, merged_stderr = merged
-        merged_diagnostic = _argv_diagnostic(
-            merged_stderr, merged_exit, "generate parser", values
-        )
-        if merged_diagnostic != own_diagnostic:
+        _merged_exit, merged_stderr = merged
+        if merged_stderr.strip() != own_diagnostic:
             # Both fail, but not for the same reason: the run is breaking on
             # something the config did not cause -- a typo in the user's own
             # flags, say. Blaming the config file would send the operator to
@@ -408,7 +411,9 @@ def _probe_config_generate_argv(
             return
     raise _config_error(
         config_path,
-        "generate section was rejected by the generate parser: " + own_diagnostic,
+        "generate section was rejected by the generate parser. Flag(s) from "
+        f"that section: {_config_flag_names(generate_argv)}."
+        + _rerun_hint("generate"),
     ) from own_exit
 
 
@@ -510,10 +515,9 @@ def _probe_config_server_argv(
     except SystemExit as exc:
         raise _config_error(
             config_path,
-            "server section was rejected by the serve parser: "
-            + _argv_diagnostic(
-                stderr.getvalue(), exc, "serve parser", _argv_value_literals(server_argv)
-            ),
+            "server section was rejected by the serve parser. Flag(s) from "
+            f"that section: {_config_flag_names(server_argv)}."
+            + _rerun_hint("serve"),
         ) from exc
 
 

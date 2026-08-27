@@ -98,7 +98,7 @@ work landed: the pre-existing `_load_serve_config`,
 `_vouch_no_flag_generate_keys` were added there.
 `src/anomaly_metric_creator/server.py` keeps only the re-import block for the
 historic `server.<name>` surface.
-`tools/check_module_size.py` (`server.py` ceiling 2096 → 1976, a net -120).
+`tools/check_module_size.py` (`server.py` ceiling 2096 → 1978, a net -118).
 *(Revised 2026-08-26: the plan was to bump the ceiling and defer extraction
 to the `server.py` decomposition follow-up. Review rounds pushed the cluster
 from +78 to +160 across four ceiling bumps, which is the growth the ratchet
