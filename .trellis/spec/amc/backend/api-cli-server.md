@@ -82,7 +82,7 @@ Sources: `src/anomaly_metric_creator/cli_args.py`;
 `src/anomaly_metric_creator/generation.py`;
 `src/anomaly_metric_creator/server_mcp.py`; `README.md`;
 `tests/test_args.py`; `tests/test_instances_per_component.py`;
-`.trellis/tasks/07-09-multi-instance-dst-splice-boundary/prd.md`.
+`.trellis/tasks/archive/2026-08/07-09-multi-instance-dst-splice-boundary/prd.md`.
 
 ### Scenario: Installed version discovery
 
@@ -175,7 +175,7 @@ pass, because that task is already reshaping the same signatures. Sources:
 `src/anomaly_metric_creator/csv_layout.py`;
 `src/anomaly_metric_creator/combine.py`; `src/anomaly_metric_creator/otel.py`;
 `src/anomaly_metric_creator/schema.py`;
-`.trellis/tasks/07-06-library-api-error-posture/prd.md`.
+`.trellis/tasks/archive/2026-08/07-06-library-api-error-posture/prd.md`.
 
 ## Output Contracts
 
