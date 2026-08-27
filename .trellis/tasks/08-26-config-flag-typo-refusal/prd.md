@@ -12,7 +12,18 @@ tokens fall through into `generate_argv`, where they are the generation
 parser's problem rather than an error anyone attributes to the typo.
 
 The security-relevant case: a config supplying `auth_token` is silently not
-applied, so a server the operator believes is authenticated is not.
+applied. On the default bind this reaches startup — `--host` defaults to
+`127.0.0.1`, and the refusal at `server.py:1579` fires only for a non-loopback
+bind without `--allow-remote-without-auth`, so an empty `auth_token` is a
+normal, unremarkable local start. The operator gets the server they asked for
+minus the authentication they configured, with nothing said.
+
+The scope of that claim is exactly the loopback default, and is worth stating
+precisely because the remote case is *not* a silent downgrade: a config
+carrying both `host` and `auth_token`, mistyped as `--conf`, loses the host
+too, so it never reaches the remote guard to be refused by it. What the typo
+produces is a locally-bound unauthenticated server, not a remotely-exposed
+one.
 
 Verified on `main` at the time of filing:
 
@@ -67,11 +78,16 @@ Candidate rules, to be decided rather than assumed:
 - Legitimate generate flags forwarded through `amc serve` must keep working
   unchanged. Derive that set from the real generate parser — never a second
   hand-maintained list, per the repo's one-registry-per-fact rule.
-- A refusal must name the offending token and say what to do, matching the
-  attribution posture `--config` errors now hold.
-- Do not print the token's *value*: `--auth-token` is a serve flag, and a
-  typo'd key is on no allowlist. The no-config-values rule established in
-  07-02 applies to this surface too.
+- A refusal must name the **flag** and say what to do, matching the
+  attribution posture `--config` errors now hold. The flag is the portion
+  before the first `=`, never the whole token: argparse accepts
+  `--auth-token=s3cret` as a single argv element, so echoing "the offending
+  token" is how the value leaks. `server_config._config_flag_names` already
+  does exactly this split and is the function to reuse.
+- Do not print any flag's *value*, whether it arrived as a separate argv
+  element or after an `=`. `--auth-token` is a serve flag, and a typo'd key is
+  on no allowlist. The no-config-values rule established in 07-02 applies to
+  this surface too.
 
 ## Acceptance Criteria
 
