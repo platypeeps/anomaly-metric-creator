@@ -96,7 +96,10 @@ mentions and reads them as ownership; they are not.
   - The reason begins at index `0` with `permanent: ` or `debt: `. Not
     contains, not after leading whitespace — at index `0`.
   - After `permanent: `, the remainder is free prose saying why the file is not
-    behavior. Nothing further is validated.
+    behavior. Its shape is not validated, but it must be non-empty: a bare
+    `permanent:` is the loudest possible unowned entry, since a permanent
+    exemption is the one disposition that never expires and so is the one that
+    most needs its reason on the record.
   - After `debt: `, the owner token is the run of non-whitespace characters up
     to the first `,`, `;`, or end of string. Exactly one such token; whitespace
     inside it is a violation, not a second owner.
