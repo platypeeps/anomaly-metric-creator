@@ -1,0 +1,100 @@
+# Lint the doc-vs-code drift the prose rule is not preventing
+
+## Goal
+
+`CLAUDE.md` already names doc/comment-vs-code drift as "the most-flagged
+review pattern in this repo's history" and instructs reviewers to grep the old
+value. That prose rule is in place, and the drift still ships.
+
+PRs #412, #413, and #414 took **nine review findings in one session**, and
+every one was a document or docstring asserting behavior the code does not
+have. The rule did not fail for lack of clarity — it failed because nothing
+runs it. `CLAUDE.md`'s own working rules say to "prefer a mechanical
+`tools/check_*.py` lint with tests over a prose rule whenever the pattern is
+greppable." This task decides which slice of the pattern is greppable and
+builds that lint.
+
+## The evidence
+
+The nine findings, grouped by whether a machine could have caught them:
+
+**Mechanically checkable — a claim about the repository that the repository
+falsifies:**
+
+- `design.md` asserted ``grep -rn "inject.dst" .trellis/spec/`` "returns
+  nothing"; the same PR added that text. (#412)
+- `design.md` asserted ``grep -in "dst" CLAUDE.md`` "returns nothing"; same
+  PR, same falsification, two bullets up — found by hand only because the
+  first one was. (#412)
+
+**Mechanically checkable — a docstring naming a behavior the module does not
+have:**
+
+- `schema.py` claimed its exports "may raise `SystemExit`, print to stdout, or
+  skip missing inputs silently". They raise `ValueError` and do none of the
+  three. (#413)
+- `combine.py` claimed "skip missing inputs silently"; a missing per-component
+  CSV raises `SystemExit`. (#413)
+- `otel.py` claimed "print to stdout"; the OTEL streamers print to stderr. (#413)
+
+**Mechanically checkable — a prose number contradicting a tracked value:**
+
+- The `server.py` ratchet *rationale* quoted a line count and a delta that no
+  longer matched the enrolled ceiling beside it. `check_module_size.py`
+  enforces the ceiling and does not read its own prose. (#414)
+
+**Not mechanically checkable — leave out of scope:**
+
+- Four findings where a doc's claim was true of one code path and false of
+  another (`_config_error`'s "every arm"; the README and spec claiming path
+  attribution both sections had, when one did not; the README implying every
+  `--instances-per-component` value conflicts with DST when only `N > 1`
+  does), and one intra-document contradiction (a prd Requirements bullet and
+  an Execution bullet naming different files). These need a reader.
+
+## Requirements
+
+- Decide the lint's scope from the three checkable groups above before
+  building. Ship the groups that hold up; record any group dropped and why.
+  Building all three is not assumed to be correct.
+- The self-falsifying-grep check runs the quoted command and compares against
+  the claim. It must handle a claim that is *deliberately* historical — #412's
+  fix was to date the claim ("at the time this was written…"), which is a
+  legitimate form the lint must not flag.
+- The docstring-behavior check must not become a second hand-maintained list.
+  Derive the vocabulary it looks for (`SystemExit`, `print(`, "silently skip",
+  "exit") from one place, and resolve a claim against the module *and* the
+  focused implementation it re-exports from — `combine.py`'s behavior lives in
+  `combine_impl.py`.
+- False positives are the failure mode that kills a lint. Prefer refusing to
+  judge over judging wrong: a construct the check cannot resolve is not a
+  violation.
+- Follow the repo's guard conventions: full contract in the module docstring,
+  `0` clean / `1` violation / `2` structural error, a companion test file, and
+  registration in every CI lane its watched files can select
+  (`tools/check_guard_ci_coverage.py` enforces the last one).
+- Add the lint to the `CLAUDE.md` repository-lints table in the same diff.
+
+## Acceptance Criteria
+
+- [ ] The scope decision is recorded with rationale before implementation,
+      naming which of the three groups ship and why any was dropped.
+- [ ] Each shipped check catches its own motivating finding: the lint is run
+      against the pre-fix content of the PRs cited above and flags it.
+- [ ] Each shipped check passes on current `HEAD` with zero findings, and the
+      dated-claim form #412 landed is not flagged.
+- [ ] `tools/check_guard_ci_coverage.py` passes with the new lint registered.
+- [ ] The lint has its own test file, running in the QUICK lane.
+- [ ] `CLAUDE.md`'s repository-lints table lists it.
+
+## Notes
+
+- Source: the review-learnings pass over PRs #412/#413/#414 (2026-08-26),
+  which clustered every finding in those three PRs as
+  `contract-documentation-drift` and suggested "contract terminology checks
+  that keep documentation and help text aligned with shipped behavior".
+- Interacts with `07-17-audit-debris-cleanup`, which owns unchecked lockstep
+  pairs — the same family of problem approached from the other end.
+- The nine findings were all caught by review, so the cost of *not* doing this
+  is reviewer time rather than shipped defects. That is a real argument for
+  P3; it is filed P2 because the volume was nine in a single session.
