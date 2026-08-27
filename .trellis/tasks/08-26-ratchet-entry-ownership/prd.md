@@ -106,7 +106,18 @@ mentions and reads them as ownership; they are not.
   - That token must equal, by exact string comparison, the name of a directory
     directly under `.trellis/tasks/`. Not a path, not a prefix, not a match
     against the archive.
-  - Everything after the terminator is free prose.
+  - Everything after the terminator is free prose, and it may name other
+    tasks. Exactly one owner is authoritative — the token before the
+    terminator — and the guard must not scan the prose for slugs. This is not
+    a loophole to close but existing, correct data to preserve: `server.py`'s
+    reason today names three other tasks, as the history of its ceiling
+    changes: `08-15-server-alias-getattr-delegation`,
+    `06-29-persisted-server-mutation-state`, and
+    `07-02-config-generate-key-validation`. None of them owns the module. A
+    guard treating any slug in the reason as an ownership claim would read
+    that entry as owned by three
+    archived tasks, which is the false-ownership reading this task exists to
+    rule out.
 
   Both existing well-formed entries already fit — `permanent: one ordered
   data-only registry…` and `debt: 07-06-server-ops-decomposition, extracting
@@ -131,11 +142,16 @@ mentions and reads them as ownership; they are not.
       rationale for each is written down — including any module whose verdict
       is that it clears the cap instead.
 - [ ] Every `debt:` reason names a task directory that exists and is active.
-- [ ] `analyse()` rejects an orphaned reason, covered by a test for each
-      rejection case: no marker, a bare `debt:` with no owner token, a `debt:`
-      naming a nonexistent task, a `debt:` naming an archived one, a slug that
-      matches an existing directory only as a substring, and `permanent`
+- [ ] `analyse()` rejects an orphaned reason with exit `1`, covered by a test
+      per case: no marker; a bare `debt:` with no owner token; a bare
+      `permanent:` with no rationale; a `debt:` naming a nonexistent task; a
+      `debt:` naming an archived one; a slug matching an existing directory
+      only as a substring; whitespace inside the owner token; and `permanent`
       appearing mid-sentence rather than as the anchored prefix.
+- [ ] A well-formed `debt:` reason whose free prose names other, non-owning
+      tasks is accepted, pinned by a test built from `server.py`'s live reason.
+- [ ] Exit codes are asserted, not assumed: `0` on the clean live tree, `1` for
+      each rejection above, and `2` still only for `StructuralError`.
 - [ ] Every disposition is recorded in this task's archived record, including
       any module whose entry was deleted rather than assigned an owner.
 - [ ] The guard passes on the live tree, and a live-tree test pins that.
