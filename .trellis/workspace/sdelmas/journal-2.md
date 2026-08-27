@@ -1662,3 +1662,49 @@ Settled a long-open question rather than leaving it implicit: the facade-exporte
 ### Next Steps
 
 - None - task complete
+
+
+## Session 88: Decide or support multi-instance DST splice behavior
+<!-- trellis-session: v=2 fp=4017e810f843bfcb -->
+
+**Date**: 2026-08-26
+**Task**: Decide or support multi-instance DST splice behavior
+**Package**: amc
+**Branch**: `docs/dst-multi-instance-boundary-posture`
+
+### Summary
+
+Closed an open question that had been read as a gap: --inject-dst-artifact-day > 0 paired with multi-instance (or gauge streaming) is an intentional design boundary, not pending work. The DST splice and per-instance row blocks are non-monotonic along two independent axes, which downstream long-form merges cannot resolve, so the parse-time rejection stays and is now documented as deliberate.
+
+### Main Changes
+
+- Recorded the decision and rationale in api-cli-server.md CLI Surface, CLAUDE.md working rules, and the README rows for --instances-per-component and --instance-config
+- Kept both the parse-time rejection and the generate_component defense-in-depth guard, with the rule that it must never be made to partially work in one artifact family
+- Review fixes: the README now names the N > 1 condition, since N = 1 stays compatible with DST injection, and the design note's two greps are dated to when they were written rather than claiming a state this task's own sweep falsifies
+- Collapsed the mutually exclusive supported/unsupported acceptance branches into one criterion resolved by the decision, and verified the remaining two by probe
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d1f8f08b3540c133ad03d8ed3a9fc2c6e6b1df92` | chore(task): archive 07-09-multi-instance-dst-splice-boundary |
+| `b899c6e0f1d42bdf93723410834588ceb9b376d6` | docs(cli): name the N > 1 condition and date the design's grep claims |
+| `8f341990fb68582b379c275d907fafde8e193115` | docs(task): check the criteria and collapse the rejected branch |
+| `c491ec9acd0a034d6feeef7bc570d4e63c06278c` | chore(trellis): fix 07-09 task metadata flagged by the review preflight |
+| `39d03898edec64442f190ddbb985521148317837` | docs(cli): record the DST × multi-instance posture as an intentional boundary |
+
+### Testing
+
+- [OK] .venv/bin/pytest -- 2194 passed, 2 skipped
+- [OK] .venv/bin/pre-commit run --all-files -- exit 0
+- [OK] --inject-dst-artifact-day 1 --instances-per-component 2 -- rejected, naming --inject-dst-artifact-day 0 and single-instance mode
+- [OK] git diff --check -- clean
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
