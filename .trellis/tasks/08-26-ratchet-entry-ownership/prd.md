@@ -145,11 +145,15 @@ mentions and reads them as ownership; they are not.
       is that it clears the cap instead.
 - [ ] Every `debt:` reason names a task directory that exists and is active.
 - [ ] `analyse()` rejects an orphaned reason with exit `1`, covered by a test
-      per case: no marker; a bare `debt:` with no owner token; a `permanent:` whose
-      rationale is empty or whitespace-only; a `debt:` naming a nonexistent task; a
-      `debt:` naming an archived one; a slug matching an existing directory
+      per case: no marker; a bare `debt:` with no owner token; a `permanent:`
+      whose rationale is empty or whitespace-only; a `debt:` naming a
+      nonexistent task; a `debt:` naming an archived one; a slug matching an
+      existing directory
       only as a substring; whitespace inside the owner token; and `permanent`
       appearing mid-sentence rather than as the anchored prefix.
+- [ ] Each accepted owner-token terminator is covered: `,`, `;`, and end of
+      string. The live table exercises only the comma form, so the other two
+      are accepted by the grammar and by nothing else today.
 - [ ] A well-formed `debt:` reason whose free prose names other, non-owning
       tasks is accepted, pinned by a test built from `server.py`'s live reason.
 - [ ] Exit codes are asserted, not assumed: `0` on the clean live tree, `1` for
