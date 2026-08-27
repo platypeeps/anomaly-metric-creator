@@ -1579,3 +1579,40 @@ Made amc serve --config validation parser-backed and symmetric across both secti
 ### Next Steps
 
 - None - task complete
+
+
+## Session 84: Track the persisted-overlay loader extraction
+<!-- trellis-session: v=2 fp=90c1255aca939ff0 -->
+
+**Date**: 2026-08-26
+**Task**: Track the persisted-overlay loader extraction
+**Package**: amc
+**Branch**: `chore/track-persisted-overlay-loader-extraction`
+
+### Summary
+
+Recorded the deferred remainder of PR #415 review round 6 as a planned Trellis task rather than leaving it in a merged PR's comment thread. Planning only; no implementation in this branch.
+
+### Main Changes
+
+- Created .trellis/tasks/08-26-persisted-overlay-loader-extraction with prd.md and the sub-agent context manifests, carrying the four items round 6 deferred: extract load_persisted_mutations and its validators to a leaf under the 800-line cap, refuse bool/float schema_version, refuse overlay objects missing a _PERSISTED_MUTATION_FIELDS key, and trim persisted extra_events to the run's limit at load
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a8992fefe4b9ce812734e43f15dcb7d9dfe6ed3b` | chore(trellis): track the persisted-overlay loader extraction |
+
+### Testing
+
+- [OK] .venv/bin/pre-commit run --all-files -- exit 0
+- [OK] git diff --check -- clean
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
