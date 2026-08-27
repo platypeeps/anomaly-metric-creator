@@ -223,9 +223,14 @@ paths never trip it because they stream one handle per component. Sources:
 `--config` accepts a JSON/YAML file with `server` and `generate` sections. The
 contract is **the config must not be the reason the run fails, and when it is,
 the error names the file** -- not "everything in the file is checked". Keys are
-always checked. Values are checked as far as they affect the run: a value the
-CLI overrides is never used, so it is not separately validated, and a section
-that only fails in isolation is not a failure at all.
+always checked, in both sections, and a `generate` key naming a *serve* flag is
+refused outright: the combined parse would let the serve parser take it first,
+so it would configure the server from the wrong section without ever reaching
+generation. Values are checked as far as they affect the run -- a `generate`
+section that only fails in isolation is not a failure. That qualifier does not
+extend to a value the CLI overrides: argparse converts every occurrence, not
+just the winning one, so a bad overridden value still breaks the run and is
+still refused.
 Config values are emitted as `--flag=value`, one token each: as a separate
 token a value starting with `-` is read as an option, so `namespace: "-weird"`
 failed as an unrecognized flag. `server` keys check against the

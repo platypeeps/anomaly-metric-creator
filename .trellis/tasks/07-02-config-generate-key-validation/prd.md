@@ -35,6 +35,25 @@ load** the way an unknown `server` key is — it either becomes a bogus `--flag`
 that fails later in `legacy.parse_args` with a less obvious message, or (for a
 key that collides with nothing) is silently dropped.
 
+## Scope As Landed
+
+Review widened this beyond generate-key validation, and the task contract
+should say so rather than leave the PRD describing a smaller change than
+shipped. Everything below was found by reviewing this code, and all of it
+predates the task:
+
+- `--config` refusals other than the generate arm did not name the file.
+- `server` keys were name-checked but their values never were.
+- Config values were emitted as separate argv tokens, so a value starting
+  with `-` was read as an option (`namespace: "-weird"` failed).
+- Parser diagnostics echoed config values back, including secrets.
+- A `generate` key naming a serve flag silently configured the server.
+- A YAML non-string key escaped as `AttributeError` past the refusal.
+- `_strip_serve_config_arg` scanned past `--`.
+
+The acceptance criteria below cover the original scope; these are recorded
+so the difference is deliberate and reviewable, not silent.
+
 ## Requirements
 
 - Add a symmetric allowlist/validation for `generate` keys in

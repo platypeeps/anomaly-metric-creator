@@ -3230,6 +3230,76 @@ def test_value_redaction_leaves_flag_only_diagnostics_alone():
     )
 
 
+def test_a_generate_key_naming_a_serve_flag_is_refused(tmp_path, capsys):
+    """`generate: {port: 9999}` silently set the *server's* port.
+
+    The combined parse lets the serve parser take what it recognizes first, so
+    the token never reaches generation and the generate probe sees a section
+    that parses clean. Caught before the combined parse instead.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"generate": {"port": 9999}}), encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "--port" in stderr
+    assert "'server' section" in stderr
+
+
+def test_an_ordinary_generate_key_is_untouched_by_that_check(tmp_path):
+    """Only `--help` is owned by both parsers, so nothing legitimate collides."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"components": "apigateway"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    _, generate_argv = server._parse_serve_args(["--config", str(config_path)], parser)
+    assert generate_argv == ["--components=apigateway"]
+
+
+def test_redaction_masks_a_value_however_the_parser_echoes_it():
+    """Argparse quotes a value with no flag attached, and values contain spaces.
+
+    A pattern over the message catches neither, so the literal config values
+    are masked directly.
+    """
+    values = server_config._argv_value_literals(
+        ["--otel-stream-speedup=s3cret", "--x=has space here"]
+    )
+    assert (
+        server_config._redact_config_values(
+            "argument --otel-stream-speedup: invalid float value: 's3cret'", values
+        )
+        == "argument --otel-stream-speedup: invalid float value: '***'"
+    )
+    assert (
+        server_config._redact_config_values(
+            "unrecognized arguments: --x=has space here", values
+        )
+        == "unrecognized arguments: --x=***"
+    )
+
+
+def test_a_bad_overridden_server_value_fails_the_combined_parse_anyway(tmp_path):
+    """Refusing it early attributes the same failure; it does not create one.
+
+    Argparse converts every occurrence, not just the winning one, so the run
+    would fail on the config's value even though the CLI overrides it.
+    """
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_known_args(["--port=abc", "--port", "8080"])
+
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"server": {"port": "abc"}}), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(
+            ["--config", str(config_path), "--port", "8080"], parser
+        )
+
+
 def test_config_stripping_stops_at_the_end_of_options_marker():
     """`--` makes argparse read the rest as positionals, so the scan stops too.
 

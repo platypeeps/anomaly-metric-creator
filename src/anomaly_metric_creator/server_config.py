@@ -214,25 +214,48 @@ def _resolve_generate_parse_args(legacy_module: Any | None = None) -> Callable[.
 _CONFIG_ARGV_VALUE = re.compile(r"(--[A-Za-z0-9][A-Za-z0-9-]*)=\S+")
 
 
-def _redact_config_values(diagnostic: str) -> str:
-    """Mask the value half of any `--flag=value` token echoed by a parser.
+def _argv_value_literals(argv: list[str]) -> tuple[str, ...]:
+    """Every config-supplied value in `argv`, longest first.
 
-    Config values are attached to their flags, so argparse quotes them back
-    verbatim -- `unrecognized arguments: --otel-auth-tokenn=s3cret` prints a
-    credential into a startup error. Which keys hold secrets is not knowable
-    here (a typo'd key is by definition not on any list), so every value is
-    masked and the flag name, which is what identifies the mistake, is kept.
-    Diagnostics that name a flag without an `=` are untouched.
+    Longest first so a value that contains a shorter one is masked whole
+    rather than leaving a fragment behind.
     """
+    values = {
+        token.split("=", 1)[1] for token in argv if token.startswith("--") and "=" in token
+    }
+    return tuple(sorted((value for value in values if value), key=len, reverse=True))
+
+
+def _redact_config_values(diagnostic: str, values: tuple[str, ...] = ()) -> str:
+    """Mask config-supplied values a parser echoed back.
+
+    Which keys hold secrets is not knowable here -- a typo'd key is by
+    definition on no list -- so every config value is masked and the flag name,
+    which is what identifies the mistake, is kept.
+
+    Masking the literal values is what makes this reliable. Argparse echoes a
+    value in more forms than the one it was written in: `invalid float value:
+    's3cret'` quotes it with no flag attached, and a value containing a space
+    is not one whitespace-delimited token. A pattern over the message catches
+    neither. The `--flag=value` substitution stays as a second pass, for a
+    parser that echoes a token this function was not handed.
+    """
+    for value in values:
+        diagnostic = diagnostic.replace(value, "***")
     return _CONFIG_ARGV_VALUE.sub(r"\1=***", diagnostic)
 
 
-def _argv_diagnostic(stderr: str, exc: SystemExit, parser_name: str) -> str:
+def _argv_diagnostic(
+    stderr: str,
+    exc: SystemExit,
+    parser_name: str,
+    values: tuple[str, ...] = (),
+) -> str:
     """Last stderr line, redacted -- or a fallback naming the exit status."""
     lines = [line for line in stderr.strip().splitlines() if line]
     if not lines:
         return f"{parser_name} exited with status {exc.code}"
-    return _redact_config_values(lines[-1])
+    return _redact_config_values(lines[-1], values)
 
 
 def _generate_argv_parses(
@@ -254,6 +277,47 @@ def _generate_argv_parses(
     except SystemExit as exc:
         return exc, stderr.getvalue()
     return None
+
+
+def _refuse_generate_keys_the_serve_parser_owns(
+    generate_argv: list[str],
+    config_path: Path | None,
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Refuse a `generate` key that is really a serve flag.
+
+    The combined parse lets the serve parser take what it recognizes first, so
+    `generate: {port: 9999}` silently sets the server's port -- and the
+    generate probe cannot catch it, because by then the token is gone from
+    `generate_argv` and the probe sees a section that parses. A `generate` key
+    must configure generation, not the server, so a token the serve parser
+    consumes is refused here, before the combined parse.
+
+    `--help` is the one flag both parsers own, and `_refuse_exiting_config_argv`
+    has already refused it.
+    """
+    if not generate_argv:
+        return
+    with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(
+        io.StringIO()
+    ):
+        try:
+            _, extra = parser.parse_known_args(list(generate_argv))
+        except SystemExit:
+            # A parse error here is the generate probe's to report, with its
+            # own diagnostic. This arm only cares about what was *consumed*.
+            return
+    consumed = [token for token in generate_argv if token not in extra]
+    if not consumed:
+        return
+    names = sorted({token.split("=", 1)[0] for token in consumed})
+    raise _config_error(
+        config_path,
+        f"generate key(s) {', '.join(names)} name serve flags, not generate "
+        "flags. The serve parser takes them before generation ever sees them, "
+        "so they would configure the server from the wrong section. Move them "
+        "to the 'server' section.",
+    )
 
 
 def _refuse_exiting_config_argv(
@@ -317,7 +381,8 @@ def _probe_config_generate_argv(
             "successfully instead of producing a configuration -- a key like "
             "'help' or 'version' does this. Remove it.",
         ) from own_exit
-    own_diagnostic = _argv_diagnostic(own_stderr, own_exit, "generate parser")
+    values = _argv_value_literals(generate_argv)
+    own_diagnostic = _argv_diagnostic(own_stderr, own_exit, "generate parser", values)
     if merged_argv is not None:
         merged = _generate_argv_parses(merged_argv, parse_args)
         if merged is None:
@@ -330,7 +395,10 @@ def _probe_config_generate_argv(
             # configuration, which the probe is not allowed to do.
             return
         merged_exit, merged_stderr = merged
-        if _argv_diagnostic(merged_stderr, merged_exit, "generate parser") != own_diagnostic:
+        merged_diagnostic = _argv_diagnostic(
+            merged_stderr, merged_exit, "generate parser", values
+        )
+        if merged_diagnostic != own_diagnostic:
             # Both fail, but not for the same reason: the run is breaking on
             # something the config did not cause -- a typo in the user's own
             # flags, say. Blaming the config file would send the operator to
@@ -443,7 +511,9 @@ def _probe_config_server_argv(
         raise _config_error(
             config_path,
             "server section was rejected by the serve parser: "
-            + _argv_diagnostic(stderr.getvalue(), exc, "serve parser"),
+            + _argv_diagnostic(
+                stderr.getvalue(), exc, "serve parser", _argv_value_literals(server_argv)
+            ),
         ) from exc
 
 
@@ -473,6 +543,9 @@ def _parse_serve_args(
             # usage, so the config would never be judged at all.
             _refuse_exiting_config_argv(
                 config_generate_argv, config_path, generate_parse_args
+            )
+            _refuse_generate_keys_the_serve_parser_owns(
+                config_generate_argv, config_path, parser
             )
         except ValueError as exc:
             parser.error(str(exc))

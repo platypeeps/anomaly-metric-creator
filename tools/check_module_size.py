@@ -117,7 +117,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        1977,
+        1978,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
