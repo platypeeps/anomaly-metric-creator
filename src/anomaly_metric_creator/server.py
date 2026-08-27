@@ -1406,152 +1406,32 @@ def _json_safe_sort_key(value: Any) -> str:
 
 
 
+# Config loading and serve-arg parsing live in server_config.py; re-imported
+# here so the historic `server.<name>` surface -- tests, and `serve_main`'s own
+# `_parse_serve_args` call below -- resolves unchanged. The dependency is
+# one-way: server_config imports nothing from this module.
+#
+# These are re-import bindings, not definitions: calls *between* the cluster's
+# own functions resolve in server_config's namespace, so a test that stubs one
+# must patch `anomaly_metric_creator.server_config.<name>`. Patching it here
+# rebinds only this module's name and the intra-cluster call is unaffected.
+from .server_config import (  # noqa: E402
+    _SERVE_CONFIG_SERVER_KEYS as _SERVE_CONFIG_SERVER_KEYS,
+    _config_error as _config_error,
+    _config_mapping_to_argv as _config_mapping_to_argv,
+    _extract_serve_config_path as _extract_serve_config_path,
+    _load_serve_config as _load_serve_config,
+    _parse_serve_args as _parse_serve_args,
+    _probe_config_generate_argv as _probe_config_generate_argv,
+    _refuse_exiting_config_argv as _refuse_exiting_config_argv,
+    _refuse_generate_keys_the_serve_parser_owns as _refuse_generate_keys_the_serve_parser_owns,
+    _probe_config_server_argv as _probe_config_server_argv,
+    _resolve_generate_parse_args as _resolve_generate_parse_args,
+    _strip_serve_config_arg as _strip_serve_config_arg,
+    _vouch_no_flag_generate_keys as _vouch_no_flag_generate_keys,
+)
 
 
-_SERVE_CONFIG_SERVER_KEYS = {
-    "host",
-    "port",
-    "namespace",
-    "debug_ring_size",
-    "persist_command_log",
-    "persist_command_db",
-    "persist_command_retention",
-    "persist_mutations",
-    "auth_token",
-    "max_request_body_bytes",
-    "allow_remote_without_auth",
-    "cors_allow_origin",
-    "rate_limit_per_minute",
-    "structured_log",
-    "structured_log_file",
-    "no_generate",
-    "continuous_generate",
-    "continuous_generate_interval_seconds",
-}
-
-
-def _load_serve_config(path: Path) -> dict[str, Any]:
-    suffix = path.suffix.lower()
-    is_yaml = suffix in {".yaml", ".yml"}
-    if suffix not in {".json", ".yaml", ".yml"}:
-        raise ValueError(
-            f"--config must be a .json, .yaml, or .yml file; got {path}"
-        )
-    if is_yaml:
-        try:
-            import yaml
-        except ImportError as exc:
-            raise ValueError(
-                f"--config {path}: PyYAML is required to parse YAML files "
-                "but is not installed. Install it with 'pip install pyyaml' "
-                "or use a .json file instead."
-            ) from exc
-        parse_exc_types: tuple[type[Exception], ...] = (
-            yaml.YAMLError,
-            UnicodeDecodeError,
-        )
-    else:
-        parse_exc_types = (json.JSONDecodeError, UnicodeDecodeError)
-    try:
-        with path.open(encoding="utf-8") as f:
-            raw = yaml.safe_load(f) if is_yaml else json.load(f)
-    except OSError as exc:
-        raise ValueError(f"--config {path}: failed to read file: {exc}") from exc
-    except parse_exc_types as exc:
-        label = "YAML" if is_yaml else "JSON"
-        raise ValueError(f"--config {path}: failed to parse {label}: {exc}") from exc
-    if raw is None:
-        raw = {}
-    if not isinstance(raw, dict):
-        raise ValueError("--config must contain a JSON/YAML object")
-    unknown_top = set(raw) - {"server", "generate"}
-    if unknown_top:
-        raise ValueError(
-            "--config only accepts top-level 'server' and 'generate' keys; "
-            f"got {', '.join(sorted(unknown_top))}"
-        )
-    server = raw.get("server", {})
-    generate = raw.get("generate", {})
-    if not isinstance(server, dict):
-        raise ValueError("--config server must be an object")
-    if not isinstance(generate, dict):
-        raise ValueError("--config generate must be an object")
-    unknown_server = set(server) - _SERVE_CONFIG_SERVER_KEYS
-    if unknown_server:
-        raise ValueError(
-            "--config server contains unknown key(s): "
-            + ", ".join(sorted(unknown_server))
-        )
-    return {"server": dict(server), "generate": dict(generate)}
-
-
-def _extract_serve_config_path(
-    argv: list[str],
-    parser: argparse.ArgumentParser,
-) -> Path | None:
-    config_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
-    config_parser.add_argument("--config", type=Path)
-    try:
-        config_args, _ = config_parser.parse_known_args(argv)
-    except SystemExit:
-        parser.error("--config requires a file path")
-    return config_args.config
-
-
-def _strip_serve_config_arg(argv: list[str]) -> list[str]:
-    result: list[str] = []
-    skip_next = False
-    for token in argv:
-        if skip_next:
-            skip_next = False
-            continue
-        if token == "--config":
-            skip_next = True
-            continue
-        if token.startswith("--config="):
-            continue
-        result.append(token)
-    return result
-
-
-def _config_mapping_to_argv(config: dict[str, Any]) -> list[str]:
-    argv: list[str] = []
-    for key, value in config.items():
-        if value is None:
-            continue
-        flag = "--" + key.replace("_", "-")
-        if isinstance(value, bool):
-            if value:
-                argv.append(flag)
-            continue
-        if isinstance(value, (list, tuple)):
-            argv.extend([flag, ",".join(str(item) for item in value)])
-            continue
-        argv.extend([flag, str(value)])
-    return argv
-
-
-def _parse_serve_args(
-    argv: list[str],
-    parser: argparse.ArgumentParser,
-) -> tuple[argparse.Namespace, list[str]]:
-    raw_argv = list(argv)
-    config_path = _extract_serve_config_path(raw_argv, parser)
-    config_server_argv: list[str] = []
-    config_generate_argv: list[str] = []
-    if config_path is not None:
-        try:
-            config = _load_serve_config(config_path)
-        except ValueError as exc:
-            parser.error(str(exc))
-        config_server_argv = _config_mapping_to_argv(config["server"])
-        config_generate_argv = _config_mapping_to_argv(config["generate"])
-    user_argv = _strip_serve_config_arg(raw_argv)
-    serve_args, generate_argv = parser.parse_known_args(
-        [*config_server_argv, *config_generate_argv, *user_argv]
-    )
-    serve_args.config = config_path
-    return serve_args, generate_argv
 
 
 def _build_serve_parser() -> argparse.ArgumentParser:
@@ -1674,7 +1554,9 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
         from . import legacy as legacy_module
 
     parser = _build_serve_parser()
-    serve_args, generate_argv = _parse_serve_args(list(argv or []), parser)
+    serve_args, generate_argv = _parse_serve_args(
+        list(argv or []), parser, legacy_module=legacy_module
+    )
     if serve_args.debug_ring_size < 1:
         parser.error("--debug-ring-size must be >= 1")
     if serve_args.port < 0 or serve_args.port > 65535:

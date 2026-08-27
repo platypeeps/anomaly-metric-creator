@@ -117,16 +117,23 @@ RATCHET: dict[str, tuple[int, str]] = {
         "inside the existing build_state() call, a non-separable addition",
     ),
     "server.py": (
-        2096,
+        1978,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
         "imports; +18 from 06-29-persisted-server-mutation-state for the "
         "--persist-mutations flag, its config-allowlist key, and the startup "
         "refusal around the existing build_state() call, later narrowed to "
-        "match PERSIST_ERROR_PREFIX (one import plus the widened condition "
-        "and its rationale) -- edits inside existing blocks, nothing "
-        "separable",
+        "match PERSIST_ERROR_PREFIX; net -118 from "
+        "07-02-config-generate-key-validation, which found this module at 2096 "
+        "and left it here. That task grew the --config cluster until every "
+        "review round needed a ceiling bump, then took the remedy this entry "
+        "had been deferring to the server.py decomposition follow-up: the "
+        "whole cluster moved to the server_config.py leaf, where it continues "
+        "to live and grow. What stayed behind is one re-import line per helper, "
+        "keeping the historic server.<name> surface working, plus a note that a "
+        "stub must patch server_config, since those bindings do not intercept "
+        "the cluster's calls to itself",
     ),
     "server_mcp.py": (
         1453,

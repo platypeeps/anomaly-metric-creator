@@ -53,6 +53,7 @@ all drive the same code.
 | OTEL / OTLP | `otel_stream.py`, `otlp.py`, `redaction.py` |
 | CLI parsing and subcommands | `cli_args.py`, `cli_subcommands.py`, `cli.py`, `version.py` |
 | HTTP serve facade | `server.py` |
+| `serve --config` loading, validation, serve-arg parsing | `server_config.py` |
 | Simulation state, command rendering, snapshots | `server_ops.py` and its leaves (`server_ops_support.py`, `server_ops_parse.py`, `server_ops_profiles.py`, `server_ops_explain.py`, `server_ops_payloads.py`, `server_command_render.py`, `server_k8s_objects.py`, `server_k8s_tables.py`, `server_k8s_api.py`, `server_k8s_api_trace.py`, `server_helm_impl.py`) |
 | Traces, overlay state, debug UI, MCP | `server_traces.py`, `server_mutations.py`, `server_debug_ui.py`, `server_mcp.py` |
 | Offline bundle analysis | `trace_bundle.py` |
@@ -187,6 +188,11 @@ still pins its own cell.
   N=1 path exactly.
 - **`--instance-config` and `schema.json` are untrusted read-back
   boundaries** — validate shape and type on the reader side.
+- **`serve --config` validates both sections at load.** `server` keys use the
+  `_SERVE_CONFIG_SERVER_KEYS` allowlist; `generate` keys are validated by
+  probe-parsing the config-derived argv through the real generate parser —
+  never add a hand-maintained second list of generate keys, it drifts on every
+  new flag.
 - Add a new `Instance` field by adding its name to
   `_INSTANCE_DIMENSION_COLUMNS`; the config validator and constructor both
   derive from it. The remaining lockstep sites are the README key list and

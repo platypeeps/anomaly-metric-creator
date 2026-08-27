@@ -257,6 +257,11 @@ operations, and the `_load_manifest_documents` /
 `server_command_render` for `CommandResult` only. `server_traces.py` for
 command traces, JSONL/SQLite persistence, search, import/export, and
 unsupported summaries; `server_mutations.py` for overlay state;
+`server_config.py` for `--config` loading, validation, and serve-arg parsing
+(the `_load_serve_config` / `_config_mapping_to_argv` / `_probe_config_generate_argv`
+/ `_vouch_no_flag_generate_keys` / `_parse_serve_args` cluster), a leaf that
+imports nothing from `server.py` and reaches the generate parser only through a
+call-time `legacy` import;
 `server_debug_ui.py` for inline HTML/CSS/JS; `server_mcp.py` for the MCP
 (Model Context Protocol) facade served at `POST /mcp` (stateless JSON-RPC
 plus the read-only tool registry and the eval-mode ground-truth wall);

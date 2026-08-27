@@ -220,6 +220,133 @@ paths never trip it because they stream one handle per component. Sources:
 
 ## Serve Mode
 
+`--config` accepts a JSON/YAML file with `server` and `generate` sections. The
+contract is **the config must not be the reason the run fails, and when it is,
+the error names the file** -- not "everything in the file is checked". Keys are
+always checked, in both sections, and a `generate` key naming a *serve* flag is
+refused outright: the combined parse would let the serve parser take it first,
+so it would configure the server from the wrong section without ever reaching
+generation. Values are checked as far as they affect the run -- a `generate`
+section that only fails in isolation is not a failure. That qualifier does not
+extend to a value the CLI overrides: argparse converts every occurrence, not
+just the winning one, so a bad overridden value still breaks the run and is
+still refused.
+Config values are emitted as `--flag=value`, one token each: as a separate
+token a value starting with `-` is read as an option, so `namespace: "-weird"`
+failed as an unrecognized flag. `server` keys check against the
+`_SERVE_CONFIG_SERVER_KEYS` allowlist; `server`
+values are checked by `_probe_config_server_argv`, which parses the
+config-derived server argv through the real serve parser on its own, the
+counterpart of the `generate` probe below. It also refuses what the parser
+does not *consume*: every token there came from an allowlisted key, so a
+leftover means `_SERVE_CONFIG_SERVER_KEYS` has drifted from the parser. Nothing
+else can catch that -- the real parse must keep tolerating unconsumed tokens,
+since generate flags travel in the same argv. Without it a bad value fell through
+to the combined parse and failed as a bare `argument --port: invalid int
+value`, naming no file. `generate` keys have no
+introspectable allowlist -- `parse_args` builds its parser inline -- so **the
+real parser is the allowlist**: the config-derived generate argv is parsed on
+its own in a probe that traps `SystemExit` and captures both streams, and a
+failure becomes a `ValueError` naming the config path and the flags involved.
+The captured streams are compared, never reported -- see the no-values rule
+below.
+Do not hand-maintain a second list of generate keys; it would drift from the
+parser on every new flag. The probe is the same parse `serve_main` runs later,
+so it must reject nothing that would have survived anyway -- but a valid key
+with an invalid *value* does fail at load, which is intended.
+
+Holding both of those at once takes two parses. Several generate gates are
+cross-flag (the preflight cell cap multiplies interval, duration, metric count,
+components, and instances), so the config section judged *in isolation* can
+fail while the real run is fine -- `interval_seconds: 1` against the defaults.
+The probe therefore runs after the combined parse and refuses only when the
+merged `generate_argv`, the argv the run will actually parse, fails too. The
+two parses are compared internally and neither one's text is reported. Two
+rules follow, and both are load-bearing. A
+merged failure counts only if it is the *same* failure the config section
+produced on its own -- otherwise the run is breaking on something the config
+did not cause, and naming the file sends the operator to the wrong place, so
+the real parse reports it later instead. And the exit-`0` check has to run
+*before* the combined parse, because the serve parser owns `--help` too and
+would print serve usage and exit before the config was ever judged.
+
+**No config error carries anything derived from a config value.** A refusal
+names the file, the section, and the flag names involved -- `_config_flag_names`
+-- and tells the operator to run that command directly to see the parser's own
+message. Masking was tried first and failed repeatedly: argparse echoes a value
+in more forms than the one it was written in (`invalid float value: 's3cret'`
+carries no flag), a value holding whitespace is not one argv token, a value
+holding a newline survives any per-line pass, and a YAML or JSON parse error
+quotes the offending region of the file straight back. Each fix was another
+case in a pattern, and the next shape leaked again. Reporting names only closes
+the class by construction, and the flag name is what identifies the mistake
+anyway. The same rule governs load failures: `_parse_failure_detail` reports a
+position, never the file's bytes -- and the JSON and YAML arms differ for a
+reason. `JSONDecodeError.msg` comes from a fixed vocabulary in the decoder and
+never interpolates the document, so it is kept; PyYAML's `problem` is not that
+kind of field (`found undefined alias 's3cret'`), so a YAML failure reports its
+error class and mark and nothing else. The YAML arm also catches `ValueError`
+and `TypeError`, not just `YAMLError`: a resolver runs on the file's own text,
+so `port: !!int "abc"` raises a bare `ValueError` from `int()` that would
+otherwise escape the refusal entirely -- unattributed, and carrying the value.
+All of this matters because `auth_token` is an allowlisted server key and a
+typo'd key is by definition on no allowlist, so no config value can be assumed
+safe to print.
+
+A `generate` key that names a *serve* flag is refused before the combined
+parse, because the serve parser takes what it recognizes first and
+`generate: {port: 9999}` would silently configure the server from the wrong
+section. `parse_known_args` sets aside a flag it does not recognize and errors
+only on one it owns, so **both** of its outcomes belong to this check: a
+consumed token, and a `SystemExit`. Letting the error arm fall through left
+`host: true` to die in the combined parse -- which runs first -- as a bare
+`argument --host: expected one argument` naming no config file, and a
+value-taking serve flag arriving bare swallows the operator's own next token
+on the way.
+Validation that is genuinely cross-flag and lives *outside* the
+parsers -- `--cors-allow-origin '*'` requiring `--auth-token`, for one -- stays
+in `serve_main` on the merged arguments; neither probe can see it, and neither
+should try. An exit-`0`
+parse is still refused -- `help: true` would print usage and exit instead of
+configuring a run -- but it must not be *described* as a rejection by the
+parser, because the parser accepted the flag. It gets its own diagnostic.
+
+`null` and `false` are the two shapes that emit no flag at all, so the argv
+probe cannot see those keys and a typo would vanish silently. They are not
+refused outright -- that would refuse `otel_verbose: false`, a real switch
+whose off state is exactly what the operator wrote. `_vouch_no_flag_generate_keys`
+asks the same real parser about the bare flag instead: a flag that parses on
+its own is a switch, so dropping the key keeps its documented meaning of "use
+the default", while a typo or a value-taking flag is refused naming the file.
+Keep this a parser question; never answer it from a hand-maintained list of
+switch names. Reading "the bare flag parses" as "this key is a switch" holds
+only while every value-taking generate option requires its value: `nargs="?"`
+and `nargs="*"` would make a value-taking flag parse bare and be vouched
+silently. Neither is used. A test pins this by *introspecting the real
+parser* -- captured by spying on `_reconcile_cli_surface`, which is handed it
+mid-parse -- not by searching the source text, which any respelling or an
+option declared elsewhere would defeat. Under `server`, both shapes still mean "use the default", since
+those key names are already allowlisted and cannot hide a typo. *Every*
+`_load_serve_config` refusal routes through `_config_error` -- suffix, read,
+parse, shape, and key arms alike -- so none can drift back to a bare message
+the way the unknown-`server`-key arm did while the generate arm was
+attributed. `_config_mapping_to_argv` stays a pure conversion -- all validation
+lives in the probe layer.
+
+`--config` is an untrusted read-back boundary, and the YAML reader admits
+shapes JSON cannot: a non-string key (`1:`, `true:`) reaches
+`key.replace("_", "-")` and raises `AttributeError`, escaping the `ValueError`
+refusal that names the file, and cannot be sorted alongside string keys for a
+diagnostic either. Both sections' keys are checked for `str` on the reader
+side, and any key set that gets sorted into a message is `str()`-mapped first.
+Sources: `src/anomaly_metric_creator/server.py`; `README.md`;
+`tests/test_server.py`. Precedence is unchanged: config flags are
+placed ahead of user flags so explicit CLI flags still win. This whole cluster lives in `src/anomaly_metric_creator/server_config.py`, a
+leaf that reads nothing from `server.py`; `server.py` re-imports every name, so
+the historic `server.<name>` surface is unchanged. Sources:
+`src/anomaly_metric_creator/server_config.py`;
+`src/anomaly_metric_creator/server.py`; `README.md`; `tests/test_server.py`.
+
 `amc serve` must generate once before listening unless `--no-generate` is set,
 must append `--otel-send none` to startup generation so the listener is not
 blocked by OTEL, and must serialize continuous regeneration with OTEL replay

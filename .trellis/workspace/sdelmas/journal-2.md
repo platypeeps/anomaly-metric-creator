@@ -1520,3 +1520,62 @@ Added --persist-mutations, an opt-in JSON overlay file that survives a simulator
 ### Next Steps
 
 - None - task complete
+
+
+## Session 83: Validate --config generate keys symmetric with server keys
+<!-- trellis-session: v=2 fp=3bd40a556f533675 -->
+
+**Date**: 2026-08-26
+**Task**: Validate --config generate keys symmetric with server keys
+**Package**: amc
+**Branch**: `feat/config-generate-key-validation`
+
+### Summary
+
+Made amc serve --config validation parser-backed and symmetric across both sections, then closed the defect class review kept surfacing: no config error carries anything derived from a config value. The --config cluster moved to a new server_config.py leaf, leaving server.py below its pre-task size.
+
+### Main Changes
+
+- Generate keys validated against the real parser rather than a second hand-maintained allowlist; null/false keys vouched by asking the parser whether the bare flag is a switch, so a typo is refused and otel_verbose: false still loads
+- Server section values validated at load, every --config refusal names the file, non-string YAML keys and constructor errors refused instead of crashing, dash-prefixed values attached to their flags, generate keys naming serve flags refused (with a value or bare), keys colliding on one flag refused, _strip_serve_config_arg stops at --
+- No config error carries anything derived from a config value: refusals name the file, section, and flag names only. Deletes the redaction helpers that leaked through four review rounds; parser streams are captured for comparison, never reported
+- Extracted the 283-line --config cluster from server.py to the server_config.py leaf; server.py 2096 -> 1978, below where the task found it, with the ratchet entry updated
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `373b7f46a3312f56691db6c05dd618fbe9ffc562` | chore(task): archive 07-02-config-generate-key-validation |
+| `ae9053db7e77a0df5330b4311d3cc9f9ab656cf3` | docs(task): check acceptance criteria and record the landed scope as criteria |
+| `5120270fe03bc4418a0fa1a79b8c6eb557ea8210` | docs(serve): correct the last design bullet that required the leak |
+| `b415ba92924ae5f741ada5b20023042c1b98598b` | fix(serve): refuse config keys that collide on one flag; sync stale docs |
+| `c734065b4395570cd4893647e20a71ee35a998e7` | fix(serve): close two config-error leaks the names-only pass left open |
+| `dedbbad1965824d28cbb5d64639a71507274aa68` | fix(serve): report flag names in config errors, never config values |
+| `6cca55e1f14dce8a6c2c3172d3cae1039389a5d0` | fix(serve): refuse serve flags in the generate section; redact by value |
+| `03ddfd6fcbbacb37b99404f947221e4f9fe4dc30` | fix(serve): stop config diagnostics leaking values and misplacing blame |
+| `9b03dfececa59172e0b538d688094fd78fb76145` | fix(serve): attach config values to their flags so a leading dash is a value |
+| `c24a5966719f0d8571f1229d4f85e83549a42aae` | fix(serve): stop the generate probe rejecting configs the run would accept |
+| `6665773542e8d563fbb211c0b95c627e370e3afd` | fix(serve): refuse server flags the parser does not consume |
+| `ef2c401c12e840658a8852880c6609728ba10634` | fix(serve): attribute bad server values, and derive the switch guard |
+| `3bbf6e7b7437bd6eb7fc0d26548f4e1d94d4abbc` | refactor(serve): extract the --config cluster to a server_config.py leaf |
+| `4d11e73ce4999f646b82b163e9386e2605454198` | fix(serve): route every config refusal through _config_error |
+| `4d5c36a0ffd90d0f37ad70154ffbfb2f6c50bc0f` | fix(serve): refuse non-string config keys on the reader side |
+| `d420741162815fa252b92e1aa27b6768c8a18164` | fix(serve): vouch no-flag config keys with the parser instead of refusing them |
+| `682500fa9ccdd2a15392ab2f9a6ac5526bac3c6d` | fix(serve): close the false-valued config key hole and attribute server keys |
+| `e0847de3b38e60cd9ac01ddd98a1a4d446275822` | feat(serve): validate --config generate keys against the real parser |
+
+### Testing
+
+- [OK] .venv/bin/pytest -- 2194 passed, 2 skipped
+- [OK] .venv/bin/pre-commit run --all-files -- exit 0
+- [OK] tools/check_module_size.py -- exit 0, server.py at 1978
+- [OK] git diff --check -- clean
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

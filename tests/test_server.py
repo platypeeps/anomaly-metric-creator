@@ -17,7 +17,7 @@ import urllib.request
 
 import pytest
 
-from anomaly_metric_creator import server, server_traces
+from anomaly_metric_creator import server, server_config, server_traces
 
 REAL_CLIENT_SMOKE_ENV = "AMC_RUN_REAL_CLIENT_SMOKE"
 
@@ -2625,10 +2625,9 @@ def test_serve_config_file_supplies_server_and_generation_defaults(tmp_path):
     assert serve_args.structured_log is True
     assert serve_args.structured_log_file == tmp_path / "requests.jsonl"
     assert serve_args.continuous_generate_interval_seconds == 3.5
-    assert "--duration-days" in generate_argv
-    assert "2" in generate_argv
-    assert "--output-dir" in generate_argv
-    assert str(tmp_path / "configured-output") in generate_argv
+    # `--flag=value`, so a value starting with `-` cannot be read as an option.
+    assert "--duration-days=2" in generate_argv
+    assert f"--output-dir={tmp_path / 'configured-output'}" in generate_argv
 
 
 def test_serve_cli_flags_override_config_file_values(tmp_path):
@@ -2670,6 +2669,845 @@ def test_serve_cli_flags_override_config_file_values(tmp_path):
     scenario_index = len(generate_argv) - 1 - generate_argv[::-1].index("--scenarios")
     assert generate_argv[duration_index + 1] == "3"
     assert generate_argv[scenario_index + 1] == "db_disk_exhaustion"
+
+
+# --------------------------------------------------------------------------
+# --config generate-key validation (07-02-config-generate-key-validation)
+#
+# The generate surface has no introspectable allowlist, so the real parser is
+# the allowlist: a probe parse of the config-derived argv runs at load time and
+# argparse's exit becomes a ValueError naming the config file. These tests pin
+# both halves -- that a bad key is rejected with attribution, and that the
+# probe does not reject keys the parser really accepts.
+# --------------------------------------------------------------------------
+
+# Spot-covers common and advanced generate flags. Asserted non-empty below so
+# the parametrized test cannot go vacuously green if this list is ever emptied.
+_VALID_GENERATE_CONFIG_KEYS = {
+    "duration_days": 2,
+    "scenarios": "cache_leak_restart",
+    "components": "apigateway,cacheservice",
+    "otel_send": "none",
+    "seed": 7,
+    "interval_seconds": 60.0,
+    "anomaly_count": 3,
+    "metrics_per_component": 4,
+    "instances_per_component": 2,
+    "emit": "metrics",
+    "drop_rate": 0.0,
+}
+
+
+def test_valid_generate_config_key_sample_is_not_empty():
+    """Guard: the parametrized valid-key test must not go vacuously green."""
+    assert _VALID_GENERATE_CONFIG_KEYS
+
+
+@pytest.mark.parametrize("key", sorted(_VALID_GENERATE_CONFIG_KEYS))
+def test_valid_generate_config_keys_survive_the_probe(key, tmp_path):
+    """Every sampled real generate flag must load without error."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({
+            "generate": {
+                key: _VALID_GENERATE_CONFIG_KEYS[key],
+                "output_dir": str(tmp_path / "out"),
+            }
+        }),
+        encoding="utf-8",
+    )
+    parser = server._build_serve_parser()
+    serve_args, generate_argv = server._parse_serve_args(
+        ["--config", str(config_path)], parser
+    )
+    assert serve_args.config == config_path
+    assert any(
+        item.startswith("--" + key.replace("_", "-") + "=") for item in generate_argv
+    )
+
+
+def test_unknown_generate_config_key_is_rejected_naming_the_file(tmp_path, capsys):
+    """A typo'd generate key fails at load, not deep in a later parse."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"componentss": "apigateway"}}),
+        encoding="utf-8",
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "componentss" in stderr
+
+
+def test_unknown_generate_config_key_raises_value_error_at_the_unit_seam(tmp_path):
+    """The probe itself raises ValueError; _parse_serve_args converts it."""
+    config_path = tmp_path / "serve-config.yaml"
+    with pytest.raises(ValueError) as excinfo:
+        server._probe_config_generate_argv(
+            ["--componentss", "apigateway"],
+            config_path,
+            server._resolve_generate_parse_args(),
+        )
+    message = str(excinfo.value)
+    assert str(config_path) in message
+    assert "componentss" in message
+
+
+@pytest.mark.parametrize("value", [None, False])
+@pytest.mark.parametrize("key", ["componentss", "components"])
+def test_unvouchable_no_flag_generate_keys_are_loud_not_silently_dropped(
+    key, value, tmp_path
+):
+    """A no-flag value is refused unless the real parser vouches for the key.
+
+    `null` and `false` emit nothing, so the argv probe never sees them -- the
+    PRD's "collides with nothing" case. Two kinds fail to vouch: a typo
+    (`componentss`), and a real key that takes a value (`components`), for
+    which neither shape means anything.
+    """
+    config_path = tmp_path / "serve-config.json"
+    with pytest.raises(ValueError) as excinfo:
+        server._vouch_no_flag_generate_keys(
+            {key: value}, config_path, server._resolve_generate_parse_args()
+        )
+    message = str(excinfo.value)
+    assert str(config_path) in message
+    assert key in message
+    assert ("null" if value is None else "false") in message
+
+
+@pytest.mark.parametrize("value", [None, False])
+@pytest.mark.parametrize("key", ["otel_verbose", "allow_huge_output"])
+def test_a_real_switch_may_still_be_turned_off_by_a_no_flag_value(key, value, tmp_path):
+    """Refusing unvouchable keys must not regress a config that works today.
+
+    Both generate switches parse on their own, so the parser vouches for them
+    and the key keeps its documented meaning of "use the default".
+    """
+    server._vouch_no_flag_generate_keys(
+        {key: value}, tmp_path / "c.json", server._resolve_generate_parse_args()
+    )
+    assert server._config_mapping_to_argv({key: value}) == []
+
+
+def test_false_generate_config_typo_is_rejected_end_to_end(tmp_path, capsys):
+    """The refusal reaches the CLI, not just the unit seam."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"componentss": False}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "componentss" in stderr
+
+
+def test_a_vouched_switch_loads_end_to_end(tmp_path):
+    """`otel_verbose: false` still loads, producing no flag."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"otel_verbose": False}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    serve_args, generate_argv = server._parse_serve_args(
+        ["--config", str(config_path)], parser
+    )
+    assert generate_argv == []
+    assert serve_args.config == config_path
+
+
+def test_a_negated_generate_flag_is_still_reachable_from_config(tmp_path):
+    """`--otel-verbose` is the one BooleanOptionalAction on the generate surface."""
+    argv = server._config_mapping_to_argv({"no_otel_verbose": True})
+    assert argv == ["--no-otel-verbose"]
+    server._probe_config_generate_argv(
+        argv, tmp_path / "c.json", server._resolve_generate_parse_args()
+    )
+
+
+def test_empty_list_generate_config_value_still_reaches_the_probe(tmp_path):
+    """An empty list produces a flag, so it is checked -- not a no-flag shape."""
+    argv = server._config_mapping_to_argv({"componentss": []})
+    assert argv == ["--componentss="]
+    with pytest.raises(ValueError):
+        server._probe_config_generate_argv(
+            argv, tmp_path / "c.json", server._resolve_generate_parse_args()
+        )
+
+
+def test_an_abbreviated_generate_key_is_refused_like_the_real_parse(tmp_path):
+    """Prefix matching is off, so the probe and the later real parse agree."""
+    parse_args = server._resolve_generate_parse_args()
+    with pytest.raises(ValueError):
+        server._probe_config_generate_argv(
+            ["--comp", "apigateway"], tmp_path / "c.json", parse_args
+        )
+    with pytest.raises(SystemExit):
+        parse_args(["--comp", "apigateway"])
+
+
+def test_a_successful_parser_exit_is_not_reported_as_a_rejection(tmp_path):
+    """`help: true` exits 0; calling that "rejected" names the wrong problem."""
+    with pytest.raises(ValueError) as excinfo:
+        server._probe_config_generate_argv(
+            ["--help"], tmp_path / "c.json", server._resolve_generate_parse_args()
+        )
+    message = str(excinfo.value)
+    assert "rejected by the generate parser" not in message
+    assert "exit" in message
+    assert "help" in message
+
+
+@pytest.mark.parametrize("section", ["server", "generate"])
+def test_a_non_string_config_key_is_refused_not_crashed_on(section, tmp_path, capsys):
+    """YAML admits non-string keys; they must not escape as an AttributeError.
+
+    `1: apigateway` reaches `key.replace("_", "-")` unguarded and raises
+    AttributeError, which escapes the ValueError refusal that names the file --
+    the entire operator-facing contract. JSON cannot produce this shape, so
+    only the YAML reader can.
+    """
+    pytest.importorskip("yaml")
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text(f"{section}:\n  1: apigateway\n", encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "must be strings" in stderr
+
+
+def test_a_non_string_top_level_config_key_is_refused(tmp_path, capsys):
+    """The unknown-top-key report sorts its keys, so it must str() them first."""
+    pytest.importorskip("yaml")
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text("1: x\nother: y\n", encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    assert "top-level" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("key", ["help", "version"])
+def test_an_exit_zero_flag_is_not_called_unrecognized(key, tmp_path):
+    """`--help` is recognized; refusing it as "not a switch" would be false."""
+    with pytest.raises(ValueError) as excinfo:
+        server._vouch_no_flag_generate_keys(
+            {key: False}, tmp_path / "c.json", server._resolve_generate_parse_args()
+        )
+    message = str(excinfo.value)
+    assert "is not a switch" not in message
+    assert "exit" in message
+
+
+def _capture_generate_parser(monkeypatch):
+    """Return the real generate `ArgumentParser`, which `parse_args` builds inline.
+
+    `_reconcile_cli_surface(p, args)` is handed the parser mid-parse, so spying
+    on it yields the actual object rather than a reconstruction. Introspecting
+    it beats matching the source text: `nargs = "?"`, a spelling with single
+    quotes, or an option declared in some other module would all slip past a
+    string search, and none slip past this.
+    """
+    from anomaly_metric_creator import cli_args
+
+    parse_args = server._resolve_generate_parse_args()
+    captured = []
+    original = cli_args._reconcile_cli_surface
+
+    def spy(parser, args):
+        captured.append(parser)
+        return original(parser, args)
+
+    monkeypatch.setattr(cli_args, "_reconcile_cli_surface", spy)
+    parse_args(["--otel-verbose"])
+    assert captured, "the parser was never handed to _reconcile_cli_surface"
+    return captured[0]
+
+
+def test_no_generate_option_can_parse_without_its_value(monkeypatch):
+    """The vouch reads "the bare flag parses" as "this key is a switch".
+
+    That inference holds only while every value-taking generate option
+    *requires* its value. `nargs="?"` and `nargs="*"` are the two shapes that
+    break it: the bare flag would parse, so a `null` or `false` written for a
+    value-taking key would be vouched and dropped in silence -- the exact hole
+    the vouch exists to close. `nargs="+"` is safe (it still requires one).
+    Neither dangerous shape is used today; this fails the moment one appears,
+    so `_vouch_no_flag_generate_keys` gets revisited with it.
+    """
+    parser = _capture_generate_parser(monkeypatch)
+    optional_value = [
+        action.option_strings for action in parser._actions if action.nargs in ("?", "*")
+    ]
+    assert optional_value == []
+
+
+def test_the_vouch_agrees_with_the_parser_about_every_option(monkeypatch):
+    """The vouch's two categories must match the parser's own, for every option.
+
+    Derived from the parser, not from a written switch list -- a list here
+    would be the same hand-maintained allowlist the design refuses to keep in
+    production, with the same drift. Every zero-argument action is vouched;
+    every option that takes a value is refused. `--help`/`--version` are
+    switches that exit rather than configure, so the vouch refuses them too,
+    with their own diagnostic.
+    """
+    parser = _capture_generate_parser(monkeypatch)
+    parse_args = server._resolve_generate_parse_args()
+    exiting = {"--help", "-h", "--version"}
+    checked = 0
+    for action in parser._actions:
+        for option in action.option_strings:
+            if not option.startswith("--") or option in exiting:
+                continue
+            key = option[2:].replace("-", "_")
+            checked += 1
+            if action.nargs == 0:
+                server._vouch_no_flag_generate_keys({key: None}, None, parse_args)
+            else:
+                with pytest.raises(ValueError):
+                    server._vouch_no_flag_generate_keys({key: None}, None, parse_args)
+    assert checked > 20, "the parser surface was not actually walked"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "not json",
+        "[]",
+        '{"nope": 1}',
+        '{"server": 3}',
+        '{"generate": 3}',
+    ],
+)
+def test_every_config_load_refusal_names_the_file(body, tmp_path):
+    """`_config_error` exists so no arm can drift back to a bare message."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(body, encoding="utf-8")
+    with pytest.raises(ValueError) as excinfo:
+        server._load_serve_config(config_path)
+    assert str(excinfo.value).startswith(f"--config {config_path}: ")
+
+
+def test_a_wrong_suffix_refusal_names_the_file(tmp_path):
+    """The suffix arm refuses before reading, and still names the file."""
+    config_path = tmp_path / "serve-config.txt"
+    config_path.write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError) as excinfo:
+        server._load_serve_config(config_path)
+    assert str(excinfo.value).startswith(f"--config {config_path}: ")
+
+
+def test_the_config_cluster_is_patched_at_its_own_module(tmp_path, monkeypatch):
+    """`server.<name>` is a re-import binding, not the definition.
+
+    The cluster's functions call each other in `server_config`'s namespace, so
+    patching the name on `server` rebinds only `server`'s copy and the real
+    call is unaffected. This pins which module a stub must target, so the
+    re-import block is not mistaken for an interception point.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"server": {"port": 9001}}), encoding="utf-8")
+    parser = server._build_serve_parser()
+
+    def boom(*args, **kwargs):
+        raise AssertionError("patched copy should not be reached")
+
+    monkeypatch.setattr(server, "_load_serve_config", boom)
+    serve_args, _ = server._parse_serve_args(["--config", str(config_path)], parser)
+    assert serve_args.port == 9001
+
+    monkeypatch.setattr(server_config, "_load_serve_config", boom)
+    with pytest.raises(AssertionError):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+
+
+def test_a_server_key_the_parser_cannot_consume_is_refused(
+    tmp_path, monkeypatch, capsys
+):
+    """An allowlist that drifts from the parser must not fail silently.
+
+    `parse_known_args` drops what it cannot consume, and the real parse must
+    keep doing so -- generate flags travel in the same argv. So the probe
+    checks the leftovers itself.
+    """
+    monkeypatch.setattr(
+        server_config,
+        "_SERVE_CONFIG_SERVER_KEYS",
+        server_config._SERVE_CONFIG_SERVER_KEYS | {"not_a_serve_flag"},
+    )
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"not_a_serve_flag": "x"}}), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        server_config._parse_serve_args(
+            ["--config", str(config_path)], server._build_serve_parser()
+        )
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "drifted" in stderr
+    assert "--not-a-serve-flag" in stderr
+
+
+def test_the_generate_probe_does_not_reject_a_config_the_run_would_accept(tmp_path):
+    """The probe must reject nothing that would have survived the real parse.
+
+    Several generate gates are cross-flag: the preflight cell cap multiplies
+    interval, duration, metric count, components, and instances. So
+    `interval_seconds: 1` overflows it against the defaults but is fine once
+    explicit CLI flags narrow the run. Judging the config section in isolation
+    would reject a working configuration.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"interval_seconds": 1}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+
+    serve_args, generate_argv = server._parse_serve_args(
+        [
+            "--config",
+            str(config_path),
+            "--components",
+            "apigateway",
+            "--metrics-per-component",
+            "1",
+            "--duration-days",
+            "1",
+        ],
+        parser,
+    )
+    assert "--interval-seconds=1" in generate_argv
+    assert serve_args.config == config_path
+
+
+def test_a_generate_typo_is_rejected_even_when_the_cli_narrows_the_run(tmp_path):
+    """Confirming against the real argv must not weaken the typo check.
+
+    An unknown flag fails both parses, so it is still refused -- only a config
+    that the actual argv makes valid is let through.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"componentss": "apigateway"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(
+            ["--config", str(config_path), "--duration-days", "1"], parser
+        )
+
+
+def test_a_config_value_starting_with_a_dash_is_not_read_as_an_option(tmp_path):
+    """`["--flag", "-x"]` makes argparse read `-x` as an option, not a value."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"namespace": "-weird"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    serve_args, _ = server._parse_serve_args(["--config", str(config_path)], parser)
+    assert serve_args.namespace == "-weird"
+
+
+def test_config_argv_attaches_every_value_to_its_flag():
+    """One token per key, so no value can be mistaken for the next option."""
+    argv = server._config_mapping_to_argv(
+        {"components": ["apigateway", "cacheservice"], "seed": 7, "otel_verbose": True}
+    )
+    assert argv == ["--components=apigateway,cacheservice", "--seed=7", "--otel-verbose"]
+
+
+def test_a_drift_report_names_flags_without_their_values(tmp_path, monkeypatch, capsys):
+    """`--auth-token` is an allowlisted server key; its value must not print."""
+    monkeypatch.setattr(
+        server_config,
+        "_SERVE_CONFIG_SERVER_KEYS",
+        server_config._SERVE_CONFIG_SERVER_KEYS | {"not_a_serve_flag"},
+    )
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"not_a_serve_flag": "s3cret-value"}}), encoding="utf-8"
+    )
+    with pytest.raises(SystemExit):
+        server_config._parse_serve_args(
+            ["--config", str(config_path)], server._build_serve_parser()
+        )
+    stderr = capsys.readouterr().err
+    assert "--not-a-serve-flag" in stderr
+    assert "s3cret-value" not in stderr
+
+
+def test_a_config_derived_help_is_refused_before_the_serve_parser_sees_it(
+    tmp_path, capsys
+):
+    """The serve parser owns `--help` too, and would exit 0 on serve usage.
+
+    The combined parse runs before the generate probe, so the exit-zero check
+    has to happen earlier or the config is never judged at all.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"generate": {"help": True}}), encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    assert "exit" in capsys.readouterr().err
+
+
+def test_a_parser_diagnostic_does_not_echo_config_values(tmp_path, capsys):
+    """The flag name identifies the mistake; the value it carried is not needed.
+
+    A typo'd key is by definition on no sensitive-key list, so no config value
+    can be assumed safe to print.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"otel_auth_tokenn": "s3cret"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    stderr = capsys.readouterr().err
+    assert "--otel-auth-tokenn" in stderr
+    assert "s3cret" not in stderr
+
+
+def test_a_failure_the_config_did_not_cause_is_not_blamed_on_it(tmp_path):
+    """Both parses failing is not enough; they must fail for the same reason.
+
+    Here the config section alone trips the cross-flag cell cap, and the merged
+    argv fails on the user's own typo. Naming the config file would send the
+    operator to the wrong place, so the real parse reports its own error later.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"interval_seconds": 1}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    _, generate_argv = server._parse_serve_args(
+        ["--config", str(config_path), "--componentss", "x"], parser
+    )
+    assert "--componentss" in generate_argv
+
+
+def test_the_config_is_still_blamed_for_a_failure_that_is_its_own(tmp_path, capsys):
+    """The quiet path must not swallow a config error the run really hits."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"componentss": "apigateway"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(
+            ["--config", str(config_path), "--duration-days", "1"], parser
+        )
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "componentss" in stderr
+
+
+def test_a_config_error_reports_flag_names_and_no_values():
+    """The unit the whole no-leak posture rests on: names in, values dropped."""
+    assert (
+        server_config._config_flag_names(
+            ["--otel-auth-token=s3cret", "--components=a,b", "--otel-verbose"]
+        )
+        == "--components, --otel-auth-token, --otel-verbose"
+    )
+    assert server_config._config_flag_names([]) == "(none)"
+
+
+@pytest.mark.parametrize("section", ["server", "generate"])
+def test_two_keys_naming_the_same_flag_are_refused(tmp_path, capsys, section):
+    """`otel_verbose` and `otel-verbose` are distinct keys, one flag.
+
+    Conversion emits it twice and argparse keeps the last, so one of the two
+    settings vanishes -- the exact silent-drop this validation exists to
+    remove. Both sections normalize the same way, so both are checked.
+    """
+    key = "otel_verbose" if section == "generate" else "auth_token"
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({section: {key: True, key.replace("_", "-"): True}}),
+        encoding="utf-8",
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert f"all name --{key.replace('_', '-')}" in stderr
+
+
+def test_a_yaml_error_reports_a_position_not_the_files_own_words(tmp_path, capsys):
+    """PyYAML's `problem` interpolates the document; argparse's `msg` does not.
+
+    `found undefined alias 's3cret'` is the parser's own field carrying the
+    file's text, so YAML reports its error class and position instead. JSON's
+    `msg` comes from a fixed vocabulary and is safe to keep, which is why the
+    two arms differ.
+    """
+    pytest.importorskip("yaml")
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text("server:\n  port: *s3cret\n", encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    stderr = capsys.readouterr().err
+    assert "failed to parse YAML: ComposerError at line 2" in stderr
+    assert "s3cret" not in stderr
+
+
+def test_a_yaml_constructor_error_still_names_the_file(tmp_path, capsys):
+    """`!!int "abc"` raises a bare ValueError, which is not a YAMLError.
+
+    It escaped the refusal entirely -- unattributed, and carrying the value.
+    Anything the loader raises on an untrusted file belongs to that file.
+    """
+    pytest.importorskip("yaml")
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text('server:\n  port: !!int "s3cret"\n', encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "failed to parse YAML: ValueError" in stderr
+    assert "s3cret" not in stderr
+
+
+def test_a_serve_flag_arriving_bare_from_generate_is_attributed(tmp_path, capsys):
+    """`host: true` in the generate section made the *combined* parse fail.
+
+    `parse_known_args` sets aside a flag it does not recognize and errors only
+    on one it owns, so an error there is this check's own case. Falling through
+    left it to the combined parse -- which runs first -- where it surfaced as a
+    bare `argument --host: expected one argument` naming no config file, and a
+    value-taking serve flag arriving bare would have swallowed the operator's
+    own next token on the way.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"generate": {"host": True}}), encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(
+            ["--config", str(config_path), "--namespace", "prod"], parser
+        )
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "--host" in stderr
+    assert "'server' section" in stderr
+
+
+def test_a_generate_key_naming_a_serve_flag_is_refused(tmp_path, capsys):
+    """`generate: {port: 9999}` silently set the *server's* port.
+
+    The combined parse lets the serve parser take what it recognizes first, so
+    the token never reaches generation and the generate probe sees a section
+    that parses clean. Caught before the combined parse instead.
+    """
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"generate": {"port": 9999}}), encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "--port" in stderr
+    assert "'server' section" in stderr
+
+
+def test_an_ordinary_generate_key_is_untouched_by_that_check(tmp_path):
+    """Only `--help` is owned by both parsers, so nothing legitimate collides."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"components": "apigateway"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    _, generate_argv = server._parse_serve_args(["--config", str(config_path)], parser)
+    assert generate_argv == ["--components=apigateway"]
+
+
+@pytest.mark.parametrize(
+    "name,body",
+    [
+        # Argparse quotes the value back with no flag attached.
+        ("float", json.dumps({"generate": {"otel_stream_speedup": "s3cret"}})),
+        # A value containing whitespace is not one argv token.
+        ("spaced", json.dumps({"generate": {"componentss": "s3cret and more"}})),
+        # A value containing a newline survives any per-line pass.
+        ("multiline", json.dumps({"generate": {"componentss": "top\ns3cret"}})),
+        # The serve parser owns --port and rejects it before generate sees it.
+        ("serve-owned", json.dumps({"server": {"port": "s3cret"}})),
+        # A malformed file: the parse error quotes the offending region.
+        ("malformed", '{"server": {"auth_token": "s3cret"'),
+    ],
+)
+def test_no_config_refusal_ever_prints_a_config_value(tmp_path, capsys, name, body):
+    """The structural property that replaced masking.
+
+    Masking was a pattern over the parser's message and leaked every time a new
+    shape turned up -- an unattached value, whitespace, a newline, a file-level
+    parse error quoting the source. Nothing derived from a config *value* is
+    put in an error now, so each of these is closed by construction rather than
+    by another case in a regex.
+    """
+    config_path = tmp_path / f"serve-config-{name}.json"
+    config_path.write_text(body, encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises((SystemExit, ValueError)) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    captured = capsys.readouterr()
+    reported = captured.err + captured.out + str(excinfo.value)
+    assert str(config_path) in reported
+    assert "s3cret" not in reported
+
+
+def test_a_bad_overridden_server_value_fails_the_combined_parse_anyway(tmp_path):
+    """Refusing it early attributes the same failure; it does not create one.
+
+    Argparse converts every occurrence, not just the winning one, so the run
+    would fail on the config's value even though the CLI overrides it.
+    """
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_known_args(["--port=abc", "--port", "8080"])
+
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(json.dumps({"server": {"port": "abc"}}), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        server._parse_serve_args(
+            ["--config", str(config_path), "--port", "8080"], parser
+        )
+
+
+def test_config_stripping_stops_at_the_end_of_options_marker():
+    """`--` makes argparse read the rest as positionals, so the scan stops too.
+
+    `_extract_serve_config_path` parses rather than scans, so it never reads a
+    `--config` after `--` as a flag. Stripping one would make the two disagree.
+    """
+    assert server._strip_serve_config_arg(["--config", "x", "--port", "1"]) == [
+        "--port",
+        "1",
+    ]
+    assert server._strip_serve_config_arg(["--config", "x", "--", "--config", "y"]) == [
+        "--",
+        "--config",
+        "y",
+    ]
+    assert server._strip_serve_config_arg(["--config=x", "--", "--config=y"]) == [
+        "--",
+        "--config=y",
+    ]
+
+
+def test_a_bad_server_config_value_is_rejected_naming_the_file(tmp_path, capsys):
+    """`server` values are attributed too, not just `server` key names."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"port": "not-a-number"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "--port" in stderr
+
+
+def test_a_valid_server_section_survives_its_probe(tmp_path):
+    """Every serve flag has a default, so a good section parses on its own."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"port": 9000, "host": "0.0.0.0"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    serve_args, _ = server._parse_serve_args(["--config", str(config_path)], parser)
+    assert (serve_args.port, serve_args.host) == (9000, "0.0.0.0")
+
+
+def test_false_server_config_value_still_means_use_the_default(tmp_path):
+    """Server keys are name-checked already, so `false` there stays a skip."""
+    argv = server._config_mapping_to_argv({"structured_log": False})
+    assert argv == []
+
+
+def test_unknown_server_config_key_is_rejected_naming_the_file(tmp_path, capsys):
+    """Both sections name the config file, which is what the README promises."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"server": {"hostt": "127.0.0.1"}}), encoding="utf-8"
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "hostt" in stderr
+
+
+def test_null_server_config_value_still_means_use_the_default(tmp_path):
+    """Server keys are name-checked already, so a null there stays a skip."""
+    argv = server._config_mapping_to_argv({"namespace": None})
+    assert argv == []
+
+
+def test_unknown_generate_config_key_is_rejected_in_yaml_form(tmp_path, capsys):
+    """YAML and JSON config forms take the same validation path."""
+    pytest.importorskip("yaml")
+    config_path = tmp_path / "serve-config.yaml"
+    config_path.write_text("generate:\n  componentss: apigateway\n", encoding="utf-8")
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert str(config_path) in stderr
+    assert "componentss" in stderr
+
+
+def test_invalid_generate_config_value_also_fails_at_load_with_attribution(tmp_path, capsys):
+    """A valid key with an out-of-range value now fails early, with the file named."""
+    config_path = tmp_path / "serve-config.json"
+    config_path.write_text(
+        json.dumps({"generate": {"instances_per_component": 999}}),
+        encoding="utf-8",
+    )
+    parser = server._build_serve_parser()
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(["--config", str(config_path)], parser)
+    assert excinfo.value.code == 2
+    assert str(config_path) in capsys.readouterr().err
+
+
+def test_probe_does_not_leak_parser_output_to_the_console(tmp_path, capsys):
+    """The probe captures argparse's streams; only the raised error surfaces."""
+    with pytest.raises(ValueError):
+        server._probe_config_generate_argv(
+            ["--componentss", "x"],
+            tmp_path / "c.json",
+            server._resolve_generate_parse_args(),
+        )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 def test_structured_request_logger_writes_request_and_error_jsonl(amc, tmp_path, monkeypatch):
