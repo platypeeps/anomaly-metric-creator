@@ -96,8 +96,10 @@ mentions and reads them as ownership; they are not.
   - The reason begins at index `0` with `permanent: ` or `debt: `. Not
     contains, not after leading whitespace — at index `0`.
   - After `permanent: `, the remainder is free prose saying why the file is not
-    behavior. Its shape is not validated, but it must be non-empty: a bare
-    `permanent:` is the loudest possible unowned entry, since a permanent
+    behavior. Its shape is not validated, but it must be non-empty after
+    stripping whitespace — `permanent:` followed by three spaces is a bare
+    `permanent:`, not a rationale. A bare one is the loudest possible unowned
+    entry, since a permanent
     exemption is the one disposition that never expires and so is the one that
     most needs its reason on the record.
   - After `debt: `, the owner token is the run of non-whitespace characters up
@@ -143,8 +145,8 @@ mentions and reads them as ownership; they are not.
       is that it clears the cap instead.
 - [ ] Every `debt:` reason names a task directory that exists and is active.
 - [ ] `analyse()` rejects an orphaned reason with exit `1`, covered by a test
-      per case: no marker; a bare `debt:` with no owner token; a bare
-      `permanent:` with no rationale; a `debt:` naming a nonexistent task; a
+      per case: no marker; a bare `debt:` with no owner token; a `permanent:` whose
+      rationale is empty or whitespace-only; a `debt:` naming a nonexistent task; a
       `debt:` naming an archived one; a slug matching an existing directory
       only as a substring; whitespace inside the owner token; and `permanent`
       appearing mid-sentence rather than as the anchored prefix.
