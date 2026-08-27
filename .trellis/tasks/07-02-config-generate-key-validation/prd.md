@@ -91,15 +91,49 @@ be arbitrary. Left outstanding for its own task.
 
 ## Acceptance criteria
 
-- [ ] An unknown `generate` key raises a clear `ValueError` naming the key and
+Original scope:
+
+- [x] An unknown `generate` key raises a clear `ValueError` naming the key and
       the config path at load time — before generation runs.
-- [ ] Every currently-valid generate key still loads (parametrized test derived
+      (`test_unknown_generate_config_key_is_rejected_naming_the_file`)
+- [x] Every currently-valid generate key still loads (parametrized test derived
       from the real parser surface, with a non-empty guard so the test can't go
-      vacuously green).
-- [ ] The precedence test (CLI flag overrides config value) still passes.
-- [ ] The serve `--config` description in
+      vacuously green). (`test_valid_generate_config_keys_survive_the_probe`,
+      guarded by `test_valid_generate_config_key_sample_is_not_empty`)
+- [x] The precedence test (CLI flag overrides config value) still passes.
+      (`test_serve_cli_flags_override_config_file_values`)
+- [x] The serve `--config` description in
       `.trellis/spec/amc/backend/api-cli-server.md` § Serve Mode notes the
       symmetric validation.
+
+Scope As Landed (each item above in that section, with its test):
+
+- [x] Every `--config` refusal names the file.
+      (`test_every_config_load_refusal_names_the_file`)
+- [x] `server` values are validated, not just their key names.
+      (`test_a_bad_server_config_value_is_rejected_naming_the_file`)
+- [x] A value starting with `-` is not read as an option.
+      (`test_a_config_value_starting_with_a_dash_is_not_read_as_an_option`)
+- [x] No config error carries anything derived from a config value, across all
+      five leak shapes. (`test_no_config_refusal_ever_prints_a_config_value`,
+      `test_a_yaml_error_reports_a_position_not_the_files_own_words`)
+- [x] A `generate` key naming a serve flag is refused, whether it carries a
+      value or arrives bare. (`test_a_generate_key_naming_a_serve_flag_is_refused`,
+      `test_a_serve_flag_arriving_bare_from_generate_is_attributed`)
+- [x] Non-string and constructor-failing YAML keys/values are refused, not
+      crashed on. (`test_a_non_string_config_key_is_refused_not_crashed_on`,
+      `test_a_yaml_constructor_error_still_names_the_file`)
+- [x] Two keys normalizing to one flag are refused rather than one silently
+      winning. (`test_two_keys_naming_the_same_flag_are_refused`)
+- [x] `_strip_serve_config_arg` stops at `--`.
+      (`test_config_stripping_stops_at_the_end_of_options_marker`)
+- [x] `null`/`false` keys are vouched against the real parser, so a typo is
+      refused and `otel_verbose: false` still loads.
+      (`test_unvouchable_no_flag_generate_keys_are_loud_not_silently_dropped`,
+      `test_a_real_switch_may_still_be_turned_off_by_a_no_flag_value`)
+- [x] The `--config` cluster moved to the `server_config.py` leaf, leaving
+      `server.py` below its pre-task size (2096 → 1978).
+      (`tools/check_module_size.py`, `test_the_config_cluster_is_patched_at_its_own_module`)
 
 ## Notes
 
