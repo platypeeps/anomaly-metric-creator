@@ -93,7 +93,8 @@ Use the local-first review cycle:
   Broad automation or CI diffs use `Automation scope:` or `CI/review scope:`;
   repos add categories via `.sd-ai-command-pack/pr-body-scope.json`. If the
   matching section is missing, request it once instead of scattering scope
-  comments across files.
+  comments across files. Do not request one when every changed file is a file
+  the pack installs — that is a version adoption, and the gate exempts it.
 - Group duplicate root causes into one comment. When deterministic local checks
   already cover a repeated issue class, point at the failing check once instead
   of repeating inline findings; if the check is missing or fragile, ask for one

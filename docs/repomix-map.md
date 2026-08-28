@@ -423,12 +423,15 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     trellis-update-spec/
       SKILL.md
   workflows/
+    ai-review-router.yml
     ci.yml
     codeql.yml
     dependabot-auto-merge.yml
+    sd-review.yml
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
+  sd-github-review.json
 .gito/
   config.toml
   sd-ai-command-pack.env
@@ -612,6 +615,8 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   .version
   config.yaml
   workflow.md
+config/
+  routed-review-setup-v1.json
 docs/
   application-flow.md
   DEVELOPMENT_CYCLE.md
@@ -660,6 +665,7 @@ src/
     schema.py
     server_command_render.py
     server_commands.py
+    server_config.py
     server_debug_ui.py
     server_helm_impl.py
     server_helm.py
@@ -747,6 +753,7 @@ tests/
   test_server_eval_mode.py
   test_server_hardening.py
   test_server_mcp.py
+  test_server_mutation_persistence.py
   test_server_ops_fuzz.py
   test_server_reset.py
   test_server_watch.py
