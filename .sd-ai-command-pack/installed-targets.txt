@@ -29,3 +29,4 @@
 .sd-ai-command-pack/installed-targets.txt
 .sd-ai-command-pack/manifest.json
 .sd-ai-command-pack/provenance.json
+AGENTS.md
