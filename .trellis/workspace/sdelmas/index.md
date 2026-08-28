@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 91
-- **Last Active**: 2026-08-26
+- **Total Sessions**: 92
+- **Last Active**: 2026-08-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1835 | Active |
+| `journal-2.md` | ~1874 | Active |
 | `journal-1.md` | ~1972 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 92 | 2026-08-28 | Refresh sd-ai-command-pack to 0.71.62 | `e8160ed8afaff308d18a02a9bd2e1b8f4f429a7f` | `chore/pack-refresh-0.71.62` |
 | 91 | 2026-08-26 | File the ratchet entries that name no owner | `74a4ddd`, `f57196f`, `830903e`, `2331ddf`, `6c7a7b7`, `090ac41`, `a295957` | `chore/ratchet-entry-ownership` |
 | 90 | 2026-08-26 | File the doc-drift lint and the serve-flag typo hole as tracked tasks | `de26475`, `d820092`, `07425d1`, `d609a5f`, `1f0f689`, `55a528b` | `chore/track-doc-drift-lint-and-config-abbrev` |
 | 89 | 2026-08-26 | Repoint four dangling spec references at the archived tasks | `599709d` | `fix/dangling-spec-task-references` |

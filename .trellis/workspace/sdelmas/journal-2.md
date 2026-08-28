@@ -1844,3 +1844,43 @@ tools/check_module_size.py's docstring asks that RATCHET reasons point at the ow
 ### Next Steps
 
 - None - task complete
+
+
+## Session 92: Refresh sd-ai-command-pack to 0.71.62
+<!-- trellis-session: v=2 fp=5d1c65edb066e123 -->
+
+**Date**: 2026-08-28
+**Task**: Refresh sd-ai-command-pack to 0.71.62
+**Package**: amc
+**Branch**: `chore/pack-refresh-0.71.62`
+
+### Summary
+
+Advanced the thin sd-ai-command-pack pin from 0.71.51 to 0.71.62 under fleet campaign refresh-0.71.62-20260828T124000Z-tail. Installer-managed files and receipts only; no product-code edits.
+
+### Main Changes
+
+- Advanced the .sd-ai-command-pack thin pin from 0.71.51 to 0.71.62 and refreshed the installer-managed AGENTS.md entry-point block and copilot-instructions adapter.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e8160ed8afaff308d18a02a9bd2e1b8f4f429a7f` | chore(pack): refresh sd-ai-command-pack to 0.71.62 |
+
+### Testing
+
+- [OK] bash scripts/update_repomix: regenerated docs/repomix-map.md.
+- [OK] python3 tools/check_ci_review_contract.py: passed.
+- [OK] python3 tools/check_copilot_instruction_contract.py: passed.
+- [OK] sd-ai-command-pack-full-check.sh: passed.
+- [OK] install.py --check --audit: audit passed, platforms claude/gemini/github/opencode, installed 0.71.62.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
