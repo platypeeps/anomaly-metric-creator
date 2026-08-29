@@ -15,10 +15,14 @@ Fleet refresh: install sd-ai-command-pack v0.71.63 (tag v0.71.63 @ 0f6bba5733689
 
 ## Acceptance Criteria
 
-- [ ] <!-- verify: install-audit release=0.71.63 platforms=claude,gemini,github,opencode --> The sd-ai-command-pack install audit passes for all four expected platforms and reports installed payload provenance 0.71.63. It runs from the sd-ai-command-pack source checkout, not from this repository.
-- [ ] <!-- verify: lane-evidence id=check-command --> `python3 tools/check_ci_review_contract.py && python3 tools/check_copilot_instruction_contract.py` passes.
-- [ ] <!-- verify: lane-evidence id=deterministic-gate --> The documented local gate passes, or its only findings are dispositioned through the fleet finding severity gate with zero blockers.
-- [ ] <!-- verify: bundle-shape --> The refresh is published as one PR whose head carries the work commit plus this task's archive and journal bookkeeping.
+- [x] <!-- verify: install-audit release=0.71.63 platforms=claude,gemini,github,opencode --> The sd-ai-command-pack install audit passes for all four expected platforms and reports installed payload provenance 0.71.63. It runs from the sd-ai-command-pack source checkout, not from this repository.
+- [x] <!-- verify: lane-evidence id=check-command --> `python3 tools/check_ci_review_contract.py && python3 tools/check_copilot_instruction_contract.py` passes.
+- [x] <!-- verify: lane-evidence id=deterministic-gate --> The documented local gate passes, or its only findings are dispositioned through the fleet finding severity gate with zero blockers.
+- [x] <!-- verify: bundle-shape --> The refresh is published as one PR whose head carries the work commit plus this task's archive and journal bookkeeping.
+
+<!-- sd-ai-command-pack:criteria-disposition:start -->
+> Every acceptance criterion was verified by the publish run.
+<!-- sd-ai-command-pack:criteria-disposition:end -->
 
 ## Post-archive handoff
 
