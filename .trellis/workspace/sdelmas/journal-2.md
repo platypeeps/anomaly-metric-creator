@@ -1884,3 +1884,42 @@ Advanced the thin sd-ai-command-pack pin from 0.71.51 to 0.71.62 under fleet cam
 ### Next Steps
 
 - None - task complete
+
+
+## Session 93: Refresh sd-ai-command-pack to 0.71.63
+<!-- trellis-session: v=2 fp=28296f45da38ca9e -->
+
+**Date**: 2026-08-28
+**Task**: Refresh sd-ai-command-pack to 0.71.63
+**Package**: amc
+**Branch**: `chore/pack-refresh-0.71.63`
+
+### Summary
+
+Advance the thin pack pin from 0.71.62 to 0.71.63 and regenerate the repomix map.
+
+### Main Changes
+
+- Bumped .sd-ai-command-pack manifest and provenance to 0.71.63
+- Regenerated docs/repomix-map.md via scripts/update_repomix
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2532be5d8fae8f368e4acc863820bddd3ad11f4c` | chore(pack): refresh sd-ai-command-pack to 0.71.63 |
+
+### Testing
+
+- [OK] python3 tools/check_ci_review_contract.py: exit 0
+- [OK] python3 tools/check_copilot_instruction_contract.py: exit 0
+- [OK] node $HOME/.agents/bin/sd-ai-command-pack-review-preflight.mjs: 0 failures, 2 warnings
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
