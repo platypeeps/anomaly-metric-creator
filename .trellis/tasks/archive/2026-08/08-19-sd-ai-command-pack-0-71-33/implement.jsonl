@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/amc/backend/directory-structure.md", "reason": "Defines which directories are product-owned, so the refresh diff can be held to installer-managed paths and this task's own bookkeeping."}
-{"file": ".trellis/spec/guides/index.md", "reason": "Guide index for this repository; the refresh must not change any documented workflow, so it bounds what installer-managed platform files are allowed to alter."}

@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/amc/backend/directory-structure.md", "reason": "Confirms which repository paths are product source versus tooling, so the refresh can be confined to installer-managed output."}
-{"file": ".trellis/spec/guides/index.md", "reason": "Names the guide set that governs how vendored tooling changes are scoped and documented in this repository."}

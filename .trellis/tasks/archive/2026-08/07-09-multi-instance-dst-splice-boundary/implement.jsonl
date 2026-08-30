@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/amc/backend/scenarios-and-data.md", "reason": "Canonical backend spec context for scenario data, instance config, schema read-back, and data-shape validation boundaries."}
-{"file": ".trellis/spec/amc/backend/api-cli-server.md", "reason": "CLI flag and validation posture context for preserving explicit parser/validation behavior."}

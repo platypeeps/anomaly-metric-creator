@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Review checklist headings, the mypy-gate command, and the test conventions the two new tests must satisfy — tmp_path isolation and order-independence under xdist --dist loadfile."}
-{"file": ".trellis/spec/amc/backend/operations-security-logging.md", "reason": "The read-boundary rule to check the _row_to_payload guard against: a store-written row is machine-written and only ever older, unlike an imported bundle, which stays fully validated."}
-{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Doc-drift rule for the rename: grep the old spelling across docstrings, specs, and docs rather than only the edited file."}

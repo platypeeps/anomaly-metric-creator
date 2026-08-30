@@ -1,0 +1,116 @@
+---
+title: Unblock server_traces.py for the mypy clean gate
+status: done
+created: 2026-08-06
+branch: sdelmas/08-07-server-traces-mypy-gate
+---
+# Unblock server_traces.py for the mypy clean gate
+
+## Goal
+
+Get `src/anomaly_metric_creator/server_traces.py` into
+`tools/check_mypy_gate.py`'s `CLEAN_MODULES` tuple (34 file paths today, sorted;
+the new entry sits between `server_ops_support.py` and `timeutil.py`), so the
+trace store is type-checked in CI like the rest of the package.
+
+## Why it is blocked now
+
+`CommandTraceStore` defines a `list()` method — the public store listing API.
+Inside the class body that name shadows the builtin, so any `list[...]`
+annotation on a method of that class resolves to the method object instead of
+the generic alias and fails to type-check.
+
+Measured on `main` at `c6f81df` (after PR #345 merged):
+
+```
+$ .venv/bin/mypy --strict src/anomaly_metric_creator/server_traces.py
+Found 11 errors in 1 file (checked 1 source file)
+```
+
+**10** of the 11 are this shadowing — they surface as
+`Function "…CommandTraceStore.list" is not valid as a type  [valid-type]` and
+`"list?[…CommandTrace]" has no attribute "__iter__"  [attr-defined]`. The 11th
+is unrelated:
+
+```
+server_traces.py:717: error: Returning Any from function declared to
+return "dict[str, Any]"  [no-any-return]
+```
+
+So the shadowing is essentially the whole gap. `python3 tools/check_mypy_gate.py
+--list` currently prints **34** modules and `server_traces.py` is not among
+them.
+
+The hazard is currently documented in the `CommandTraceStore` class docstring
+("Annotation hazard: `list` shadows the builtin throughout this class body…").
+That is prose, and this repo prefers a mechanical `tools/check_*.py` lint over
+a prose rule whenever the pattern is greppable — which this one is.
+
+## Requirements
+
+- Eliminate the 10 shadowing errors. Two candidate shapes, to be decided in
+  design:
+  1. Rename the store method (`list` → e.g. `list_traces`) and update every
+     caller. This is a **public surface change**: `legacy.py` re-imports,
+     `state.legacy` lookups in the server, the debug UI, and the MCP surfaces
+     may all reach it. Requires a call-site audit before it is chosen.
+  2. Keep the method name and rewrite the in-class annotations to avoid the
+     bare builtin — `Sequence[...]`, `typing.List[...]`, or quoted
+     annotations. Non-breaking, but leaves the trap for future edits.
+- Resolve the remaining `no-any-return` at `server_traces.py:717`.
+- Add `"src/anomaly_metric_creator/server_traces.py"` to `CLEAN_MODULES` in
+  `tools/check_mypy_gate.py` in the same change, so the gate enforces the
+  result. `CLEAN_MODULES` is a `tuple[str, ...]` of repo-relative **file
+  paths**, not module basenames, and it is kept in sorted order.
+- If option 2 is chosen, add a mechanical lint (with tests, per repo
+  convention) rejecting a bare `list[...]` annotation inside
+  `CommandTraceStore`, and drop the prose note in favour of pointing at it.
+
+## Also in scope: the payload TypedDict
+
+Raised in the PR #345 local review and deferred there as scope expansion.
+`_insert_trace_row` takes `payload: dict[str, Any]`, which is the shape
+`CommandTrace.to_dict()` returns. A `TypedDict` would let mypy check the
+21-column INSERT's inputs instead of accepting `Any`.
+
+It belongs here rather than in its own task: same file, same gate, and
+touching `to_dict` and its consumers is exactly what surfaces the rest of the
+module's typing debt.
+
+## Acceptance Criteria
+
+The last two criteria are the two exclusive branches of the shape decision.
+The **rename** branch was taken (`CommandTraceStore.list` → `list_traces`), so
+the fourth is the one that had to be satisfied and the fifth is recorded as
+not-taken rather than deleted, so the decision stays legible.
+
+- [x] `mypy --strict src/anomaly_metric_creator/server_traces.py` reports 0 errors.
+      → `Success: no issues found in 1 source file`.
+- [x] `python3 tools/check_mypy_gate.py --list` includes
+      `src/anomaly_metric_creator/server_traces.py`, and
+      `python3 tools/check_mypy_gate.py` exits 0.
+      → listed; `Success: no issues found in 35 source files`, exit 0.
+- [x] Full suite green; no behavior change to the trace store.
+      → `1917 passed, 2 skipped`. The one deliberate delta is the
+      `_row_to_payload` `TypeError` on a non-object `payload_json` row, which
+      is unreachable from any row this store wrote.
+- [x] If the store method was renamed, every call site is updated and the
+      `legacy.py` re-import surface is unchanged for existing importers.
+      → renamed; `grep -rn "\.list(" src/ tests/ --include=*.py` returns zero
+      hits, and `legacy.py` never referenced `CommandTraceStore`, so that
+      surface is unchanged by construction.
+- [x] If the method name was kept, the mechanical lint exists, has tests, and
+      fails on a bare `list[...]` annotation added inside `CommandTraceStore`.
+      → **branch not taken.** Keeping the name would have required a lint to
+      police every future annotation in the class body; the rename removes the
+      hazard at its source, so no such lint was written.
+
+## Out of scope
+
+Any behavior change to trace persistence, search, or the FTS mirror. This is a
+typing task.
+
+## Source
+
+PR #345 (audit A-031), recorded as an explicit follow-up in its description and
+in the local-review disposition comment.

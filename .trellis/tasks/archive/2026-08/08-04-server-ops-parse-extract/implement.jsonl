@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/amc/backend/architecture.md", "reason": "Server-module map and one-way re-import decomposition rules the extraction must follow; updated here to list server_ops_parse.py."}
-{"file": ".trellis/spec/amc/backend/index.md", "reason": "Backend spec index and canonical development conventions for the amc package."}
