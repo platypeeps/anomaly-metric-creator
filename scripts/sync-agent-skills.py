@@ -180,6 +180,18 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     repo_root = args.repo_root.resolve(strict=False)
     skills = tuple(dict.fromkeys(args.skills or discovered_skills(repo_root)))
+    if not skills:
+        # Discovery replaced a hard-coded roster, and traded one failure mode
+        # for another: a roster naming a vanished skill aborted loudly, while an
+        # empty enumeration returns success having copied nothing -- so a
+        # mis-pointed --repo-root or a half-checked-out tree reads as a clean
+        # sync, and --check certifies six roots it never looked at.
+        print(
+            f"error: no skills to sync: {repo_root / SOURCE_ROOT} holds no skill "
+            "directory, and no --skill was given",
+            file=sys.stderr,
+        )
+        return 1
     check_failed = False
 
     try:

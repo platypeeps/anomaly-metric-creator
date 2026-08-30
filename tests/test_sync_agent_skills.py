@@ -89,3 +89,28 @@ def test_dry_run_does_not_create_claude_root(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert f"would-install: .claude/skills/{SKILL}" in result.stdout
     assert not (repo_root / ".claude").exists()
+
+
+def test_missing_source_root_fails_instead_of_reporting_a_clean_sync(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    result = _run(repo_root)
+
+    assert result.returncode == 1, result.stdout
+    assert "no skills to sync" in result.stderr
+    assert not (repo_root / ".claude").exists()
+
+
+def test_empty_source_root_fails_check_instead_of_certifying_nothing(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / ".agents" / "skills").mkdir(parents=True)
+
+    result = _run(repo_root, "--check")
+
+    assert result.returncode == 1, result.stdout
+    assert "no skills to sync" in result.stderr
