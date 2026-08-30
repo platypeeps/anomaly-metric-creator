@@ -215,7 +215,7 @@ def main(argv: list[str]) -> int:
             "\nUse 'python -m pip install PACKAGE==VERSION' (or "
             "'uv pip install PACKAGE==VERSION') in workflows, not bare or "
             "unpinned 'pip' — see 'CI / workflow / dependency hygiene' in "
-            ".trellis/spec/amc/backend/testing-quality.md. Exempt a line "
+            "docs/spec/amc/backend/testing-quality.md. Exempt a line "
             "with a trailing "
             "'# pip-lint: allow'.",
             file=sys.stderr,

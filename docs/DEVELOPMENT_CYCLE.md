@@ -253,11 +253,6 @@ a pack helper by name on PATH means the answering install has nothing to do
 with the pack this repository is pinned to, which is the version split the pack
 now forbids in its own skills.
 
-`tools/check_scope_heading_mirrors.py` keeps its forwarder-recognition branch.
-It guards against *any* future repo-owned file at that path being mistaken for
-the scope-guard authority, and its test synthesizes one in a temporary
-directory, so it never depended on these five files.
-
 ## Task Archival And The Generated Repository Map
 
 `docs/repomix-map.md` is a generated structural map of the tracked tree,

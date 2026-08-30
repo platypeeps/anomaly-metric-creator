@@ -310,7 +310,7 @@ def test_mcp_tool_handlers_have_no_rubric_access():
     follows module-local helper calls so moving a rubric read one function
     down cannot evade review. External ops renderers have their own live
     multi-surface sweep in this module. See the MCP facade and eval-mode
-    contract in `.trellis/spec/amc/backend/api-cli-server.md`.
+    contract in `docs/spec/amc/backend/api-cli-server.md`.
     """
     forbidden_attributes = {
         "anomaly_rows",

@@ -48,7 +48,7 @@ def test_docs_specs_and_agent_files_are_lightweight(tmp_path: Path) -> None:
     changed = _changed_file(
         tmp_path,
         "docs/DEVELOPMENT_CYCLE.md",
-        ".trellis/spec/amc/backend/testing-quality.md",
+        "docs/spec/amc/backend/testing-quality.md",
         ".github/prompts/review-pr.prompt.md",
         ".agents/skills/trellis-before-dev/SKILL.md",
         ".prism/rules.json",

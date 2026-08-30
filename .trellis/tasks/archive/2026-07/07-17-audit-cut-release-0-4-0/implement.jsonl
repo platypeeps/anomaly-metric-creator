@@ -1,3 +1,0 @@
-{"file":".trellis/spec/amc/backend/architecture.md","reason":"Keep installed-version discovery in one focused module while preserving the package, CLI, and MCP facade boundaries."}
-{"file":".trellis/spec/amc/backend/api-cli-server.md","reason":"Add the common --version surface without changing subcommand routing or the two-tier help contract."}
-{"file":".trellis/spec/amc/backend/documentation-review.md","reason":"Keep release notes, version policy, audit evidence, checklist mirrors, and generated repository documentation synchronized."}

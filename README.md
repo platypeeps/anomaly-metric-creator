@@ -1421,7 +1421,7 @@ which is why lower worker counts remain the memory-conservative override.
 Several focused checks run on every `git commit` via `.pre-commit-config.yaml`:
 
 - **`ruff` F401 (unused imports).** Enforces the rule called out in
-  [.trellis/spec/amc/backend/testing-quality.md](.trellis/spec/amc/backend/testing-quality.md)
+  [docs/spec/amc/backend/testing-quality.md](docs/spec/amc/backend/testing-quality.md)
   ("Pytest, Ruff, and Pre-Commit") as a
   mechanical check rather than a human-reviewer task. The configuration
   lives in `pyproject.toml` (`[tool.ruff.lint] select = ["F401"]`); the
@@ -1446,14 +1446,11 @@ Several focused checks run on every `git commit` via `.pre-commit-config.yaml`:
   before review without creating `__pycache__` entries.
 - **`ruff` F841 (unused local variables).** Scopes unused-local enforcement to
   runtime code, helper tools, and Python hook adapters.
-- **Agent hook exceptions (`tools/check_agent_hook_exceptions.py`).** Forbids
-  `except BaseException` / bare `except` in Python hook adapters and requires a
-  reason comment on intentionally empty `except Exception: pass` handlers.
 - **Clean-module mypy gate (`tools/check_mypy_gate.py`).** Owns the canonical
   19-module zero-error set used by both full CI and local review preflight.
-- **Trellis placeholders (`tools/check_trellis_placeholders.py`).** Blocks
-  unfinished journal/task template text such as `(Add details)` from committed
-  Trellis workspace artifacts.
+- **Work-item placeholders (`tools/check_work_item_placeholders.py`).** Blocks
+  unfinished template text such as `(Add details)` from committed work items
+  under `docs/work/`.
 - **Trace payload anti-patterns (`tools/check_trace_payload_antipatterns.py`).**
   Keeps command-trace import/export boundaries on strict validators instead of
   direct casts or silent malformed-entry filtering.
@@ -1485,7 +1482,7 @@ runs against commit messages at the `commit-msg` stage. Those are separate Git
 hooks from `pre-commit`, which is why both explicit install commands above are
 one-time per-clone steps. The branch guard rejects
 any branch name matching `(?i)(^|\b)ver-\d+` — see
-[.trellis/spec/amc/backend/testing-quality.md](.trellis/spec/amc/backend/testing-quality.md)
+[docs/spec/amc/backend/testing-quality.md](docs/spec/amc/backend/testing-quality.md)
 and [CLAUDE.md](CLAUDE.md) for the policy, anchors, and full invocation modes
 of `tools/check_branch_name.py`. The pre-push hook checks the current local
 branch only; CI independently checks the actual pull-request

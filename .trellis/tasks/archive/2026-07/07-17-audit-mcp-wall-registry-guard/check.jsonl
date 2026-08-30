@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Verify the registry-coupled tool sweep, AST guard, mutation checks, and complete-suite evidence meet the canonical quality gate."}
-{"file": ".trellis/spec/amc/backend/documentation-review.md", "reason": "Verify the Trellis spec, historical guide, audit ledger, task evidence, and generated repository map stay synchronized."}

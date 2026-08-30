@@ -7,7 +7,7 @@ surface, so both import paths resolve to the same objects.
 These exports are a CLI-internal surface, not a supported programmatic
 API: a missing per-component CSV raises ``SystemExit`` rather than an
 exception the caller can catch, and progress is printed to stdout
-unconditionally. See ``.trellis/spec/amc/backend/api-cli-server.md``
+unconditionally. See ``docs/spec/amc/backend/api-cli-server.md``
 § Library-API Error Posture.
 """
 

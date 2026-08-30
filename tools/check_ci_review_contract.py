@@ -36,7 +36,7 @@ REQUIRED_FILES = {
     "precommit": Path(".pre-commit-config.yaml"),
     "classifier": Path("scripts/classify-ci-changes.sh"),
     "development_cycle": Path("docs/DEVELOPMENT_CYCLE.md"),
-    "testing_spec": Path(".trellis/spec/amc/backend/testing-quality.md"),
+    "testing_spec": Path("docs/spec/amc/backend/testing-quality.md"),
     "copilot_ci": Path(
         ".github/instructions/anomaly-metric-creator.instructions.md"
     ),
@@ -78,10 +78,9 @@ _LIGHTWEIGHT_PYTHON_PREFIX = "uv run --python 3.14 --no-project python"
 _LIGHTWEIGHT_PYTHON_GUARDS = (
     "tools/check_python_syntax.py",
     "tools/check_workflow_pip.py",
-    "tools/check_trellis_placeholders.py",
+    "tools/check_work_item_placeholders.py",
     "tools/check_ci_review_contract.py",
     "tools/check_copilot_instruction_contract.py",
-    "tools/check_scope_heading_mirrors.py",
 )
 _CODEQL_ACTION_PATTERN = re.compile(
     r"^\s*uses:\s*github/codeql-action/(init|analyze)@([0-9a-f]{40})(?:\s|$)",
@@ -486,10 +485,6 @@ def _check_ci(
             "git ls-files src scripts .agents .trellis",
         ),
         (
-            "agent-hook-exception CI guard",
-            "python tools/check_agent_hook_exceptions.py",
-        ),
-        (
             # Task-text-only PRs skip every test job, so the criteria guard's
             # own test never runs for them; this step is its only CI lane.
             "task-criteria CI guard",
@@ -502,7 +497,7 @@ def _check_ci(
             # edited, so narrowing this to the diff would satisfy the guard
             # needle while silently dropping the coverage it exists for.
             "task-criteria live-tree roots",
-            "git ls-files '.trellis/tasks/*.md' '.trellis/tasks/**/*.md'",
+            "git ls-files 'docs/work/*.md' 'docs/work/**/*.md'",
         ),
         (
             # Load-bearing, not defensive: with zero path operands the guard

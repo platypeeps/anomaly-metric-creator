@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/amc/backend/scenarios-and-data.md", "reason": "Verify any data-shape or schema/read-back contract changes are reflected in canonical specs."}
-{"file": ".trellis/spec/amc/backend/testing-quality.md", "reason": "Use testing guidance to choose coverage across artifact families if support is implemented."}

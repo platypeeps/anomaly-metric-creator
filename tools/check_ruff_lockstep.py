@@ -5,7 +5,7 @@ ruff is pinned in two places that must agree. The contract is stated in
 the inline comments on the pins themselves — ``pyproject.toml`` ("Pinned
 exactly: must match ``rev: vX.Y.Z`` … Bump both lines together") and
 ``.pre-commit-config.yaml`` ("``rev`` must match the ``ruff==X.Y.Z``
-pin") — and summarized in ``.trellis/spec/amc/backend/testing-quality.md``.
+pin") — and summarized in ``docs/spec/amc/backend/testing-quality.md``.
 The two pin sites:
 
 * ``pyproject.toml`` — ``ruff==X.Y.Z`` in the ``dev`` optional-dependency

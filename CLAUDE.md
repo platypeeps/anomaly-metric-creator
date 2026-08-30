@@ -7,7 +7,7 @@ serve them through an incident-simulator HTTP facade (`amc serve`) that answers
 real `kubectl`, Helm, and MCP clients.
 
 **Canonical development conventions live in
-[`.trellis/spec/amc/backend/index.md`](.trellis/spec/amc/backend/index.md) and
+[`docs/spec/amc/backend/index.md`](docs/spec/amc/backend/index.md) and
 the focused specs it maps.** This file is an adapter: it carries only the
 always-needed orientation below plus routing. When a durable rule changes,
 update the focused Trellis spec first. User-facing usage, install, the CLI
@@ -19,11 +19,11 @@ model and remote-bind posture live in [SECURITY.md](SECURITY.md).
 
 | Touching… | Read |
 | --- | --- |
-| Generation, registries, module boundaries, topology | [architecture.md](.trellis/spec/amc/backend/architecture.md), [scenarios-and-data.md](.trellis/spec/amc/backend/scenarios-and-data.md) |
-| CLI, server, API, schema, validation, trace bundles | [api-cli-server.md](.trellis/spec/amc/backend/api-cli-server.md) |
-| Command traces, persistence, auth/CORS/rate limits, redaction, k8s/Helm facades, debug UI | [operations-security-logging.md](.trellis/spec/amc/backend/operations-security-logging.md) |
-| Tests, validators, determinism, CI, dependencies, review readiness | [testing-quality.md](.trellis/spec/amc/backend/testing-quality.md) |
-| Docs, PR descriptions, Copilot guidance, agent-platform files | [documentation-review.md](.trellis/spec/amc/backend/documentation-review.md) |
+| Generation, registries, module boundaries, topology | [architecture.md](docs/spec/amc/backend/architecture.md), [scenarios-and-data.md](docs/spec/amc/backend/scenarios-and-data.md) |
+| CLI, server, API, schema, validation, trace bundles | [api-cli-server.md](docs/spec/amc/backend/api-cli-server.md) |
+| Command traces, persistence, auth/CORS/rate limits, redaction, k8s/Helm facades, debug UI | [operations-security-logging.md](docs/spec/amc/backend/operations-security-logging.md) |
+| Tests, validators, determinism, CI, dependencies, review readiness | [testing-quality.md](docs/spec/amc/backend/testing-quality.md) |
+| Docs, PR descriptions, Copilot guidance, agent-platform files | [documentation-review.md](docs/spec/amc/backend/documentation-review.md) |
 | Topology edges, per-edge tuning, per-instance routing | [docs/topology.md](docs/topology.md), [README.md](README.md#topology-graph-v1) |
 | Dispatch order, subcommand flow, artifact lifecycle diagrams | [docs/application-flow.md](docs/application-flow.md) |
 | Release process, pinned-tool bumps, review cadence | [docs/DEVELOPMENT_CYCLE.md](docs/DEVELOPMENT_CYCLE.md) |
@@ -46,7 +46,7 @@ documented semantics — do not rework them into library-grade error handling,
 and give a new facade export the same note. The single revisit trigger is a
 real embedder requirement, which belongs inside the typed-boundaries audit
 work. Full posture in
-[api-cli-server.md](.trellis/spec/amc/backend/api-cli-server.md) §
+[api-cli-server.md](docs/spec/amc/backend/api-cli-server.md) §
 Library-API Error Posture.
 
 | Surface | Owner |
@@ -69,7 +69,7 @@ Library-API Error Posture.
 | Offline bundle analysis | `trace_bundle.py` |
 
 Full per-module contents, the server leaf DAG, and the import directions are in
-[architecture.md](.trellis/spec/amc/backend/architecture.md) § Module
+[architecture.md](docs/spec/amc/backend/architecture.md) § Module
 Boundaries.
 
 `server.py` republishes the historic `anomaly_metric_creator.server` attribute
@@ -208,7 +208,7 @@ still pins its own cell.
   and per-instance row blocks are non-monotonic along two independent axes.
   Keep the parse-time rejection and the `generate_component` defense-in-depth
   guard; never make it partially work in one artifact family. Full rationale
-  in [api-cli-server.md](.trellis/spec/amc/backend/api-cli-server.md) § CLI
+  in [api-cli-server.md](docs/spec/amc/backend/api-cli-server.md) § CLI
   Surface.
 - Add a new `Instance` field by adding its name to
   `_INSTANCE_DIMENSION_COLUMNS`; the config validator and constructor both
@@ -236,12 +236,12 @@ to different workers and produce non-reproducible failures. Derive scenario
 coverage from `amc.SCENARIOS` rather than hard-coding slug lists. Full
 conventions — fixture reuse, streaming reads, resource cost, cross-platform
 guards, the CI partition contract — are in
-[testing-quality.md](.trellis/spec/amc/backend/testing-quality.md).
+[testing-quality.md](docs/spec/amc/backend/testing-quality.md).
 
 ## Review readiness
 
 The 15 pre-PR checklist headings and their per-heading bullets are canonical in
-[testing-quality.md](.trellis/spec/amc/backend/testing-quality.md) § Review
+[testing-quality.md](docs/spec/amc/backend/testing-quality.md) § Review
 Checklist, mirrored by `.github/PULL_REQUEST_TEMPLATE.md` and
 `.github/instructions/anomaly-metric-creator.instructions.md` and enforced by
 `tools/check_copilot_instruction_contract.py`. Rename a heading in the spec and
@@ -254,7 +254,7 @@ grep the **old value** across docstrings, CLI help, `README.md`, `docs/`, and
 the specs — not only the file you edited.
 
 Known Copilot false positives are catalogued in
-[testing-quality.md](.trellis/spec/amc/backend/testing-quality.md); verify a
+[testing-quality.md](docs/spec/amc/backend/testing-quality.md); verify a
 flag against current `HEAD` before acting, but treat flags as actionable by
 default.
 
@@ -280,10 +280,9 @@ in its own module docstring. Read the script, not a copy of it.
 | `tools/check_module_size.py` | the 800-line behavior-module cap, ratcheted: an enrolled over-cap module grows only by a reviewed ceiling bump in the same diff, a finished extraction must drop its entry; `--list` prints the enrolled table |
 | `tools/check_ci_review_contract.py` | CI cadence, action pins, partition commands, aggregate guards |
 | `tools/check_copilot_instruction_contract.py` | checklist-heading lockstep across the spec, template, and Copilot instructions |
-| `tools/check_task_criteria_commands.py` | quoted acceptance-criteria commands in `.trellis/tasks/**/*.md` that cannot produce the output they claim |
+| `tools/check_task_criteria_commands.py` | quoted acceptance-criteria commands in `docs/work/**/*.md` that cannot produce the output they claim |
 | `tools/check_guard_ci_coverage.py` | every `tools/check_*.py` on disk running in each of the three CI lanes (LIGHT / QUICK / FULL) its watched files can select, and each lint's own test file running in the QUICK lane; `--list` prints the per-lint coverage table |
-| `tools/check_scope_heading_mirrors.py` | every prose description of the PR-body scope guard naming the category headings the guard actually recognizes, derived from `~/.agents/bin/sd-ai-command-pack-pr-body-scope.py` merged with `.sd-ai-command-pack/pr-body-scope.json` rather than from a stored list; `--list` prints the mirror table |
-| `tools/check_trellis_placeholders.py`, `tools/check_python_syntax.py`, `tools/check_agent_hook_exceptions.py`, `tools/check_trace_payload_antipatterns.py` | placeholder, syntax, hook-exception, and trace-payload shapes |
+| `tools/check_work_item_placeholders.py`, `tools/check_python_syntax.py`, `tools/check_trace_payload_antipatterns.py` | placeholder, syntax, and trace-payload shapes |
 
 `tools/benchmark_combine.py` is the one intentional exception to the
 every-tool-has-tests convention: a measurement harness, not a lint.
@@ -302,5 +301,5 @@ Run the narrowest focused regression first, then affected suites, then broader
 checks when the blast radius warrants it. CI is the merge gate — the required
 branch-protection context is the aggregate `CI Result`; the local pre-commit
 hooks do not run there. See
-[testing-quality.md](.trellis/spec/amc/backend/testing-quality.md) for the lane
+[testing-quality.md](docs/spec/amc/backend/testing-quality.md) for the lane
 classification, the heavy/light partition, and the coverage and mypy gates.

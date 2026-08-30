@@ -378,7 +378,7 @@ def stream_otel_gauges(
     surface, not a supported programmatic API: a per-component CSV that
     does not exist on disk is skipped silently rather than raising. That
     is documented semantics, not a defect. See
-    ``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+    ``docs/spec/amc/backend/api-cli-server.md`` § Library-API Error
     Posture.
     """
     if not component_csv_paths:

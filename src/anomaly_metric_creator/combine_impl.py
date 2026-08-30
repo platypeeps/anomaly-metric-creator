@@ -104,7 +104,7 @@ def combine_logs_unified(
     surface, not a supported programmatic API: it raises ``SystemExit``
     on missing inputs and prints progress to stdout unconditionally.
     Both are documented semantics, not defects. See
-    ``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+    ``docs/spec/amc/backend/api-cli-server.md`` § Library-API Error
     Posture.
     """
     input_dir = Path(input_dir)
@@ -441,7 +441,7 @@ def combine_logs(input_dir, components=None, *, assume_monotonic_wide_components
     surface, not a supported programmatic API: it raises ``SystemExit``
     on missing inputs and prints progress to stdout unconditionally.
     Both are documented semantics, not defects. See
-    ``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+    ``docs/spec/amc/backend/api-cli-server.md`` § Library-API Error
     Posture.
     """
     input_dir = Path(input_dir)
