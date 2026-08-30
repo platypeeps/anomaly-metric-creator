@@ -11,9 +11,9 @@ installed `amc` / `anomaly-metric-creator` console scripts dispatch through
 `anomaly_metric_creator.cli`. The authoritative development conventions live in
 `docs/spec/amc/backend/index.md`; `CLAUDE.md` is an orientation/routing adapter
 guide, and `README.md` documents the user-facing surface. Read the relevant
-Trellis spec plus the supporting source docs before reviewing a change — do not
-produce overview-only or generic Python feedback. If a change touches behavior
-that Trellis already specifies, the review should be grounded in those
+spec under `docs/spec/` plus the supporting source docs before reviewing a
+change — do not produce overview-only or generic Python feedback. If a change
+touches behavior a spec already states, the review should be grounded in those
 specifics.
 
 ## Local-first review cadence
@@ -43,9 +43,10 @@ this gating is in place.
   py3.14 test lane and heavy/non-heavy pytest split (Python 3.14 is the only
   CI-tested version).
 - Before a final remote Copilot pass, prefer a local
-  `bash ~/.agents/bin/sd-ai-command-pack-full-check.sh` run. During iteration, use
-  `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash ~/.agents/bin/sd-ai-command-pack-full-check.sh`
-  to skip optional AI review while keeping the deterministic local guards.
+  `.venv/bin/pre-commit run --all-files` plus
+  `node scripts/check-review-preflight.mjs` run. Those are the deterministic
+  local guards; during iteration run only the ones covering the changed
+  surface.
 
 ## Review-cycle reduction
 
@@ -62,7 +63,7 @@ wildcard namespaces, invalid owner/repo slugs, missing paths, and unintended
 whole-repo scans.
 
 For docs, skills, prompts, and CI changes, check lockstep across
-`docs/spec`, `.agents/skills`, `.github/prompts`,
+`docs/spec`, `.agents/skills` and its rendered copies,
 `.github/instructions`, `.pre-commit-config.yaml`,
 `scripts/classify-ci-changes.sh`, `tools/check_ci_review_contract.py`,
 `tools/check_copilot_instruction_contract.py`, and focused tests. When the PR
@@ -180,7 +181,7 @@ for the relevant `Automation scope:`, `CI/review scope:`,
   duplicate of a session-scoped fixture multiplies suite wall-time
   and peak RSS.
 
-## Pre-PR checklist headings (canonical in Trellis)
+## Pre-PR checklist headings (canonical in the PR template)
 
 PR descriptions in this repo carry a 15-heading checklist mirrored from
 `docs/spec/amc/backend/testing-quality.md` and
@@ -226,7 +227,7 @@ confirmed but the diff does not support:
     on both old and new caller shapes.
 14. **CI / workflow / dependency hygiene** — workflow YAML, dependency pins,
     Dependabot behavior, and generated review instructions stay in lockstep
-    with Trellis, `pyproject.toml`, pre-commit, and CI.
+    with `docs/spec/`, `pyproject.toml`, pre-commit, and CI.
 15. **Changelog / version impact** — user-visible behavior, compatibility,
     package metadata, and release posture are reflected in `CHANGELOG.md` and
     the version plan, or the PR explains why no entry/bump is warranted.

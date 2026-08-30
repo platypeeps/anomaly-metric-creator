@@ -119,7 +119,8 @@ Two parameters carry load-bearing contracts:
   bulk clear is — verified by mutating each in turn.
 
 Sources: `src/anomaly_metric_creator/server_traces.py`; `tests/test_server.py`;
-`.trellis/audit/ledger.md` (A-031).
+`docs/work/archive/2026-08/2026-08-06-trace-row-insert-dedupe/` (audit item
+A-031; the audit ledger it was tracked in was framework state and is gone).
 
 ### Gotcha: two ways a trace-store test can silently prove nothing
 

@@ -13,8 +13,8 @@
   ],
   "required": [
     {
-      "id": "trellis-task-scope",
-      "text": "Check that changes are limited to the active Trellis task and do not silently alter unrelated workflow, task, or platform files."
+      "id": "work-item-scope",
+      "text": "Check that changes are limited to the active work item under docs/work/ and do not silently alter unrelated workflow, spec, or platform-adapter files."
     },
     {
       "id": "review-recurrence-prevention",
@@ -34,7 +34,7 @@
     },
     {
       "id": "amc-ci-review-economy",
-      "text": "For workflow or review-tooling changes, verify scripts/classify_ci_changes.sh, CI lane conditions, docs/DEVELOPMENT_CYCLE.md, and Trellis testing-quality guidance stay in lockstep."
+      "text": "For workflow or review-tooling changes, verify scripts/classify-ci-changes.sh, CI lane conditions, docs/DEVELOPMENT_CYCLE.md, and docs/spec/amc/backend/testing-quality.md stay in lockstep."
     }
   ]
 }

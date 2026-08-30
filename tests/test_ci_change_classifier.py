@@ -49,8 +49,8 @@ def test_docs_specs_and_agent_files_are_lightweight(tmp_path: Path) -> None:
         tmp_path,
         "docs/DEVELOPMENT_CYCLE.md",
         "docs/spec/amc/backend/testing-quality.md",
-        ".github/prompts/review-pr.prompt.md",
-        ".agents/skills/trellis-before-dev/SKILL.md",
+        ".github/instructions/anomaly-metric-creator.instructions.md",
+        ".agents/skills/amc-server-compatibility/SKILL.md",
         ".prism/rules.json",
     )
 
@@ -98,7 +98,6 @@ def test_review_tooling_scripts_stay_in_lightweight_lane(tmp_path: Path) -> None
         "scripts/classify-ci-changes.sh",
         "scripts/classify_ci_changes.sh",
         "scripts/check-review-preflight.mjs",
-        ".sd-ai-command-pack/pr-body-scope.json",
     )
 
     result = _run(str(changed))
@@ -163,17 +162,17 @@ def test_repo_tooling_mixed_with_runtime_path_requires_app_gate(tmp_path: Path) 
     assert outputs["app_required"] == "true"
 
 
-def test_command_pack_payload_and_audit_artifacts_are_lightweight(
-    tmp_path: Path,
-) -> None:
+def test_rendered_skill_payloads_are_lightweight(tmp_path: Path) -> None:
+    # One skill, rendered into every platform root. A change to it is agent
+    # guidance in six places, never application code.
     changed = _changed_file(
         tmp_path,
-        ".sd-ai-command-pack/installed-targets.txt",
-        ".sd-ai-command-pack/manifest.json",
-        ".sd-ai-command-pack/provenance.json",
-        ".sd-ai-command-pack/review-preflight.json",
-        ".trellis/audit/ledger.md",
-        ".trellis/audit/report-2026-07-17.md",
+        ".agents/skills/amc-server-compatibility/SKILL.md",
+        ".claude/skills/amc-server-compatibility/SKILL.md",
+        ".codex/skills/amc-server-compatibility/references/server-compatibility-map.md",
+        ".gemini/skills/amc-server-compatibility/SKILL.md",
+        ".github/skills/amc-server-compatibility/agents/openai.yaml",
+        ".opencode/skills/amc-server-compatibility/SKILL.md",
     )
 
     result = _run(str(changed))
@@ -206,14 +205,13 @@ def test_opencode_package_json_forces_dependency_lane(tmp_path: Path) -> None:
     assert outputs["lightweight_only"] == "false"
 
 
-def test_copied_trellis_and_sd_adapters_stay_in_lightweight_lane(tmp_path: Path) -> None:
+def test_copilot_review_surfaces_stay_in_lightweight_lane(tmp_path: Path) -> None:
     changed = _changed_file(
         tmp_path,
-        ".github/agents/trellis-check.agent.md",
-        ".github/skills/trellis-check/SKILL.md",
-        ".github/copilot/hooks/session-start.py",
-        ".github/prompts/sd-review-pr.prompt.md",
-        ".sd-ai-command-pack/installed-targets.txt",
+        ".github/copilot-instructions.md",
+        ".github/instructions/anomaly-metric-creator.instructions.md",
+        ".github/skills/amc-server-compatibility/SKILL.md",
+        "docs/REVIEW_PATTERNS.md",
     )
 
     result = _run(str(changed))
@@ -260,7 +258,7 @@ def test_explicit_path_list_after_separator_is_supported() -> None:
     result = _run(
         "--",
         "docs/REVIEW_PATTERNS.md",
-        ".sd-ai-command-pack/installed-targets.txt",
+        ".prism/rules.json",
     )
 
     assert result.returncode == 0, result.stderr
@@ -305,7 +303,7 @@ def test_default_collection_includes_untracked_files(tmp_path: Path) -> None:
     docs.mkdir()
     (docs / "REVIEW_PATTERNS.md").write_text("# Review\n", encoding="utf-8")
 
-    env = {**os.environ, "TRELLIS_CI_BASE_REF": "HEAD"}
+    env = {**os.environ, "AMC_CI_BASE_REF": "HEAD"}
     result = subprocess.run(
         ["bash", str(SCRIPT)],
         cwd=tmp_path,

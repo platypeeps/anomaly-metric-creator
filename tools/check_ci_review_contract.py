@@ -329,8 +329,8 @@ def _check_lightweight_uv_cache_permissions(
         return
 
     setup_marker = "name: Set up uv for lightweight guards"
-    permission_marker = "name: Harden uv cache permissions for pack subprocess guards"
-    guard_marker = "name: Syntax and Trellis artifact guards"
+    permission_marker = "name: Harden uv cache permissions for the uv-run guards"
+    guard_marker = "name: Syntax and artifact guards"
     permission_command = 'install -d -m 0700 -- "$UV_CACHE_DIR"'
 
     _require_contains(
@@ -358,7 +358,7 @@ def _check_lightweight_uv_cache_permissions(
         block,
         guard_marker,
         path=path,
-        label="lightweight Syntax and Trellis guard step",
+        label="lightweight Syntax and artifact guard step",
         violations=violations,
     )
 
@@ -372,7 +372,7 @@ def _check_lightweight_uv_cache_permissions(
     ):
         violations.append(
             f"{path}: lightweight uv cache permission step must run after "
-            "setup-uv and before the Syntax and Trellis artifact guards"
+            "setup-uv and before the Syntax and artifact guards"
         )
 
 
@@ -482,7 +482,7 @@ def _check_ci(
         ),
         (
             "role-name live-tree roots",
-            "git ls-files src scripts .agents .trellis",
+            "git ls-files src scripts .agents",
         ),
         (
             # Task-text-only PRs skip every test job, so the criteria guard's
@@ -949,8 +949,8 @@ def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
         ("review tooling output", 'emit_output "review_tooling_changed"'),
         ("untracked local files", "git ls-files --others --exclude-standard"),
         ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
-        ("command-pack payload classification", ".sd-ai-command-pack/*"),
-        ("Trellis audit classification", ".trellis/audit/*"),
+        ("platform skill-root classification", ".agents/*"),
+        ("work-item and spec classification", "docs/spec/*"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
@@ -965,7 +965,6 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
         ),
         ("Copilot instruction contract hook", "id: copilot-instruction-contract"),
         ("Copilot instruction contract entry", "tools/check_copilot_instruction_contract.py"),
-        ("PR body scope config trigger", ".sd-ai-command-pack/pr-body-scope"),
         ("Copilot hook pass_filenames", "pass_filenames: false"),
         ("role-name commit-message hook", "id: role-name-commit-message"),
         ("commit-message hook stage", "stages: [commit-msg]"),
@@ -992,7 +991,6 @@ def _check_precommit(path: Path, text: str, violations: list[str]) -> None:
 def _check_docs(path: Path, text: str, violations: list[str]) -> None:
     for label, needle in [
         ("contract guard mention", "check_ci_review_contract.py"),
-        ("PR body scope guard mention", "sd-ai-command-pack-pr-body-scope.py"),
         ("stable aggregate", "stable aggregate"),
         ("lightweight lane", "lightweight readiness"),
         ("quick lane", "quick test"),

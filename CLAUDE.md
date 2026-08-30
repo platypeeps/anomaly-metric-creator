@@ -10,7 +10,7 @@ real `kubectl`, Helm, and MCP clients.
 [`docs/spec/amc/backend/index.md`](docs/spec/amc/backend/index.md) and
 the focused specs it maps.** This file is an adapter: it carries only the
 always-needed orientation below plus routing. When a durable rule changes,
-update the focused Trellis spec first. User-facing usage, install, the CLI
+update the focused spec under `docs/spec/` first. User-facing usage, install, the CLI
 reference, output files, and the anomaly catalog live in
 [README.md](README.md) — read it first if you need to run the tool. The trust
 model and remote-bind posture live in [SECURITY.md](SECURITY.md).
@@ -272,7 +272,7 @@ in its own module docstring. Read the script, not a copy of it.
 | `tools/check_branch_name.py` | branch names republishing an internal ticket literal (`pre-push`; install with `pre-commit install --hook-type pre-push`) |
 | `tools/check_ruff_lockstep.py` | the `ruff==` pin in `pyproject.toml` against the ruff-pre-commit `rev` |
 | `tools/check_csv_formula_trigger_lockstep.py` | the CSV formula-trigger set in `trace_bundle._CSV_FORMULA_TRIGGERS` against the debug UI's marked `csvCell` guard — two independent export paths, neither of which follows the other |
-| `tools/check_repomix_map_freshness.py` | every path listed in the generated `docs/repomix-map.md` still resolving to a tracked file or directory. Runs `always_run` because staleness comes from *other* files moving, not from editing the map. Two things are deliberately out of scope: the reverse direction (a tracked file absent from the map), and `.trellis/tasks/**`, which `scripts/update_repomix` excludes — see the comment there before restoring it |
+| `tools/check_repomix_map_freshness.py` | every path listed in the generated `docs/repomix-map.md` still resolving to a tracked file or directory. Runs `always_run` because staleness comes from *other* files moving, not from editing the map. One direction is deliberately out of scope: a tracked file absent from the map. The map's only exclusion is the artifact itself; an archive commit that moves a `docs/work/` directory is expected to carry the regenerated map |
 | `tools/check_workflow_pip.py` | bare or unpinned `pip install` in workflows |
 | `tools/check_test_resource_cost.py` | whole-file reads of generated CSVs under `tests/` |
 | `tools/check_amc_module_load.py` | direct `spec_from_file_location` loads of `legacy.py` in tests |
@@ -294,7 +294,7 @@ every-tool-has-tests convention: a measurement harness, not a lint.
 .venv/bin/pre-commit run --all-files   # lints, ruff, mechanical guards
 .venv/bin/ruff check tests/
 git diff --check
-~/.agents/bin/sd-ai-command-pack-full-check.sh   # the local review gate
+node scripts/check-review-preflight.mjs        # the local review gate
 ```
 
 Run the narrowest focused regression first, then affected suites, then broader

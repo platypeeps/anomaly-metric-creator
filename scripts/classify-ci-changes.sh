@@ -19,7 +19,7 @@ Options:
   -h, --help        Show this help.
 
 If changed-files.txt and explicit paths are omitted, the script compares HEAD to
-the merge base of TRELLIS_CI_BASE_REF (default: origin/main) and includes
+the merge base of AMC_CI_BASE_REF (default: origin/main) and includes
 unstaged/staged paths.
 EOF
 }
@@ -72,21 +72,17 @@ is_review_tooling_path() {
     scripts/classify-ci-changes.sh|scripts/classify_ci_changes.sh|scripts/check-review-preflight.mjs)
       return 0
       ;;
-    # Installed command-pack surfaces are matched by shape, not by roster. The
-    # pack owns which files it ships, so pinning their names here turned every
-    # pack refresh into a classifier change. Since the thin conversion the only
-    # such surface left in this tree is the metadata directory; the pack's
-    # scripts live on the machine and never appear in a diff here.
-    .sd-ai-command-pack/*)
-      return 0
-      ;;
+    # Every case below names a directory that has tracked files in this repo.
+    # The list previously carried installed-pack and platform-hook paths that no
+    # diff could ever contain; a glob that cannot match is a stale citation, not
+    # a safety margin.
     .agents/*|.codex/*|.claude/*|.gemini/*|.opencode/*|.prism/*)
       return 0
       ;;
-    .github/agents/*|.github/hooks/*|.github/instructions/*|.github/prompts/*|.github/skills/*)
+    .github/instructions/*|.github/skills/*)
       return 0
       ;;
-    .github/copilot-instructions.md|.github/copilot/hooks.json|.github/copilot/hooks/*)
+    .github/copilot-instructions.md)
       return 0
       ;;
     docs/DEVELOPMENT_CYCLE.md|docs/REVIEW_PATTERNS.md)
@@ -119,7 +115,7 @@ is_lightweight_path() {
     docs/*.md|docs/**/*.md)
       return 0
       ;;
-    .trellis/audit/*|docs/spec/*|.trellis/tasks/*|.trellis/workspace/*)
+    docs/spec/*|docs/work/*)
       return 0
       ;;
   esac
@@ -138,7 +134,7 @@ is_lightweight_path() {
 }
 
 collect_changed_files() {
-  local base_ref="${TRELLIS_CI_BASE_REF:-origin/main}"
+  local base_ref="${AMC_CI_BASE_REF:-origin/main}"
   local merge_base=""
 
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then

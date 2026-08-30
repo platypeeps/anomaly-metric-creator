@@ -46,7 +46,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                   HEAD_REF: ${{{{ github.head_ref }}}}
                 run: uv run --python 3.14 --no-project python tools/check_branch_name.py "$HEAD_REF"
               - run: |
-                  git ls-files src scripts .agents .trellis
+                  git ls-files src scripts .agents
                   uv run --python 3.14 --no-project python tools/check_amc_module_load.py
                   uv run --python 3.14 --no-project python tools/check_test_resource_cost.py
                   uv run --python 3.14 --no-project python tools/check_role_name_leaks.py
@@ -88,27 +88,20 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             steps:
               - name: Set up uv for lightweight guards
                 uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
-              - name: Harden uv cache permissions for pack subprocess guards
+              - name: Harden uv cache permissions for the uv-run guards
                 run: install -d -m 0700 -- "$UV_CACHE_DIR"
               - run: git diff --check "origin/$BASE_REF...HEAD"
               - run: |
                   while IFS= read -r script; do
                     bash -n "$script"
                   done < <(git ls-files 'scripts/*.sh' scripts/update_repomix)
-              - name: Syntax and Trellis artifact guards
+              - name: Syntax and artifact guards
                 run: git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
               - run: uv run --python 3.14 --no-project python tools/check_python_syntax.py
               - run: uv run --python 3.14 --no-project python tools/check_workflow_pip.py
               - run: uv run --python 3.14 --no-project python tools/check_work_item_placeholders.py
               - run: uv run --python 3.14 --no-project python tools/check_ci_review_contract.py
               - run: uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
-              - run: |
-                  scope_guard="$(python3 .sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py --resolve sd-ai-command-pack-pr-body-scope.py)"
-                  if [ -n "$scope_guard" ]; then
-                    uv run --python 3.14 --no-project python "$scope_guard"
-                  else
-                    echo "skipped: no resolvable sd-ai-command-pack install provides the PR body scope guard"
-                  fi
           quick_check:
             name: quick test
             steps:
@@ -303,7 +296,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 files: ^scripts/(.*\.sh|update_repomix)$
               - id: ci-review-contract
                 entry: python tools/check_ci_review_contract.py
-                files: ^\.sd-ai-command-pack/pr-body-scope\.json$
+                files: ^\.pre-commit-config\.yaml$
                 pass_filenames: false
               - id: test-resource-cost
                 entry: python tools/check_test_resource_cost.py
@@ -326,16 +319,14 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         emit_output "review_tooling_changed" "$review_tooling_changed"
         git ls-files --others --exclude-standard
         scripts/check-review-preflight.mjs
-        .sd-ai-command-pack/*
-        .trellis/audit/*
-        .sd-ai-command-pack/pr-body-scope.json
+        .agents/*
+        docs/spec/*
         """,
     )
     _write(
         root / "docs/DEVELOPMENT_CYCLE.md",
         """
         check_ci_review_contract.py
-        sd-ai-command-pack-pr-body-scope.py
         stable aggregate
         lightweight readiness
         quick test
@@ -348,7 +339,6 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         root / "docs/spec/amc/backend/testing-quality.md",
         """
         check_ci_review_contract.py
-        sd-ai-command-pack-pr-body-scope.py
         stable aggregate
         lightweight readiness
         quick test
@@ -1144,7 +1134,7 @@ def test_lightweight_uv_cache_hardening_must_precede_guards(tmp_path: Path) -> N
     ci = tmp_path / ".github/workflows/ci.yml"
     text = ci.read_text(encoding="utf-8")
     permission_step = (
-        "      - name: Harden uv cache permissions for pack subprocess guards\n"
+        "      - name: Harden uv cache permissions for the uv-run guards\n"
         "        run: install -d -m 0700 -- \"$UV_CACHE_DIR\""
     )
     text = text.replace(f"{permission_step}\n", "", 1)
@@ -1167,8 +1157,8 @@ def test_lightweight_uv_cache_hardening_must_precede_guards(tmp_path: Path) -> N
     (
         ("name: Set up uv for lightweight guards", "lightweight uv setup step"),
         (
-            "name: Syntax and Trellis artifact guards",
-            "lightweight Syntax and Trellis guard step",
+            "name: Syntax and artifact guards",
+            "lightweight Syntax and artifact guard step",
         ),
     ),
 )

@@ -2,15 +2,15 @@
 
 This repository's authoritative development conventions live in
 [docs/spec/amc/backend/index.md](docs/spec/amc/backend/index.md). Read the
-Trellis backend specs before editing code, docs, tests, CI, or platform
-adapters. Sources: `docs/spec/amc/backend/index.md`, `.trellis/workflow.md`.
+backend specs there before editing code, docs, tests, CI, or platform
+adapters. Source: `docs/spec/amc/backend/index.md`.
 
 [CLAUDE.md](CLAUDE.md) is the Claude Code adapter: orientation and routing for
 the SCENARIOS-based architecture, the `Scenario` dataclass, per-scenario
 `days_required` semantics, the import-time `_validate_scenarios_registry()`
 invariants, and the lockstep checklist for adding metrics, components, or
-scenarios. If guidance conflicts, reconcile it into Trellis rather than adding
-another copy here. Sources: `CLAUDE.md`, `docs/spec/amc/backend/`.
+scenarios. If guidance conflicts, reconcile it into `docs/spec/` rather than
+adding another copy here. Sources: `CLAUDE.md`, `docs/spec/amc/backend/`.
 
 User-facing usage, install, CLI reference, output files, and the anomaly catalog
 live in [README.md](README.md).
@@ -23,8 +23,8 @@ or platform-adapter tree changes make the map stale, refresh it with
 
 This file used to duplicate the agent guide and drifted from the runtime module
 after the SCENARIOS migration. To prevent that recurring, durable conventions
-now live in Trellis specs; update the focused spec first and keep this file as
-a short entry point. Sources: `AGENTS.md`, `docs/spec/amc/backend/index.md`.
+now live in the `docs/spec/` tree; update the focused spec first and keep this
+file as a short entry point. Sources: `AGENTS.md`, `docs/spec/amc/backend/index.md`.
 
 ## Quick start
 

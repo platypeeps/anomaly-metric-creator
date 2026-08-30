@@ -329,7 +329,6 @@ def test_real_repo_tree_is_clean():
         REPO_ROOT / "src",
         REPO_ROOT / "scripts",
         REPO_ROOT / ".agents",
-        REPO_ROOT / ".trellis",
         REPO_ROOT / "tools",
         REPO_ROOT / "tests",
         REPO_ROOT / ".github",

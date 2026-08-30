@@ -1,4 +1,4 @@
-"""Remote-bind DoS hardening (Trellis task 07-02-server-remote-bind-hardening).
+"""Remote-bind DoS hardening (docs/work/archive/2026-07/2026-07-02-server-remote-bind-hardening).
 
 Covers the four bounds added so a reachable non-loopback `amc serve` cannot
 be driven into thread/memory exhaustion: bounded worker threads (fast 503

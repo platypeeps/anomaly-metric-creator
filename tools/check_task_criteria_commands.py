@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject Trellis acceptance-criteria commands that cannot do what they claim.
+"""Reject work-item acceptance-criteria commands that cannot do what they claim.
 
 Acceptance criteria in ``docs/work/**/*.md`` are quoted as runnable shell
 commands with a stated expected output, so a command that cannot produce that

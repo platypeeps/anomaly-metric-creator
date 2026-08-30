@@ -7,24 +7,22 @@ regenerates it automatically, so it goes stale whenever files move and the map
 does not move with them. Two real occurrences, one week apart, each blocked a
 merge:
 
-* a ``task.py archive`` run moved ``.trellis/tasks/<slug>/`` into
-  ``.trellis/tasks/archive/<month>/`` and left five map lines pointing at the
-  old paths;
+* an archive run moved a work-item directory into its ``archive/<month>/``
+  home and left five map lines pointing at the old paths;
 * six new ``scripts/`` files were added and never appeared in the map at all.
 
 This check catches the first class at commit time, where the remedy is one
 ``scripts/update_repomix`` run, instead of at the review gate after the moving
 commit already landed.
 
-That first occurrence no longer reproduces, and the reason is a constraint on
-this check rather than a fact about it: ``scripts/update_repomix`` now excludes
-``.trellis/tasks/**``, so an archive moves nothing the map lists. It had to.
-While those paths were mapped, the archive commit was required to carry a
-regenerated map to pass *this* check, and the command pack's completion
-finalization rejects ``docs/repomix-map.md`` in the post-work delta — so that
-commit could satisfy one gate or the other, never both. The exclusion resolves
-it at the source instead of weakening either. Read the comment in
-``scripts/update_repomix`` before restoring those paths.
+That first class reproduces again, deliberately. It had been suppressed by
+excluding the moving paths from the map, because the framework's completion
+finalization rejected ``docs/repomix-map.md`` in the post-work delta and the
+archive commit could satisfy that gate or this check, never both. That
+finalization gate was removed on 2026-08-30, so the archive commit may now
+carry the regenerated map and the exclusion is gone. An archive that moves a
+``docs/work/`` directory is expected to run ``scripts/update_repomix`` in the
+same commit. Read the comment in ``scripts/update_repomix`` for the history.
 
 Direction and scope
 -------------------
@@ -36,13 +34,10 @@ missing from the map. The two directions have very different costs. A path that
 appears in the map is by definition not excluded from it, so verifying it needs
 no exclusion set at all and cannot produce a false positive. Going the other way
 requires knowing every rule that legitimately keeps a tracked file out of the
-map, and in this repository those rules come from three unrelated places:
+map, and in this repository those rules come from two unrelated places:
 
-* ``docs/repomix-map.md`` itself and ``.trellis/tasks/**``, via the ``--ignore``
-  flag in ``scripts/update_repomix``;
-* ``.trellis/.template-hashes.json``, matched by a root ``.gitignore`` entry
-  even though the file is tracked (so a plain ``git check-ignore`` finds
-  nothing; only ``--no-index`` does);
+* ``docs/repomix-map.md`` itself, via the ``--ignore`` flag in
+  ``scripts/update_repomix``;
 * ``uv.lock``, excluded by Repomix's *built-in* default patterns, which are
   named in no file in this repository.
 
@@ -73,9 +68,11 @@ Parsing
 Repomix renders the listing as an indented tree inside a fenced block under a
 ``# Directory Structure`` heading. Each level is exactly two spaces and a
 trailing ``/`` marks a directory, so an entry's full path is the stack of
-enclosing directory names. This mirrors the parser in the command pack's
-``sd-ai-command-pack-review-preflight.mjs`` on purpose: two independent parsers
-disagreeing about what the map says would be worse than either alone.
+enclosing directory names. A second parser of the same format used to live in
+the installed command pack, and this one deliberately mirrored it so the two
+could not disagree about what the map says. That pack is gone from this
+repository, so this is now the only parser of the map -- the mirroring
+constraint no longer applies, and the format above is the whole contract.
 
 Usage::
 
@@ -334,7 +331,7 @@ def check(map_path: Path, repo_root: Path) -> tuple[bool, str]:
         "repomix map is stale:\n"
         + "\n".join(f"  {part}" for part in parts)
         + f"\nThe map no longer describes the tracked tree -- most often because "
-        f"files moved (a `task.py archive` run) without the map moving with "
+        f"files moved (a work-item archive, say) without the map moving with "
         f"them. Regenerate it with `{_REGENERATE}` and commit the result "
         f"alongside the change that moved them."
     )

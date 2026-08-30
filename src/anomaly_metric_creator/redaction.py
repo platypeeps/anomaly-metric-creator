@@ -1,7 +1,7 @@
 """Sensitive HTTP-header redaction for the OTEL transport diagnostics.
 
 Extracted verbatim from ``legacy.py`` (decomposition step 1; see
-``.trellis/tasks/07-02-legacy-monolith-decomposition/design.md``).
+``docs/work/archive/2026-07/2026-07-02-legacy-monolith-decomposition/design.md``).
 ``legacy.py`` re-imports every name so the historic ``legacy.<name>``
 surface is unchanged; new code should import from here.
 

@@ -4,20 +4,18 @@ The lint asserts that every path listed in the generated Repomix structural map
 still exists in the tracked tree. Nothing regenerates that map automatically, so
 it goes stale whenever files move without it.
 
-The archive-move fixture below keeps its shape after `scripts/update_repomix`
-stopped mapping `.trellis/tasks/**` (see the comment there). The fixtures build
-their own synthetic repositories, so the shape under test is "a whole directory
-moved out from under its map entries" — the general case, which the live map
-still carries for every other tree — not a claim about where the real map
-currently lists task directories.
+The fixtures build their own synthetic repositories, so the shape under test is
+"a whole directory moved out from under its map entries" — the general case —
+rather than a claim about any particular tree. Work items under `docs/work/` are
+the live instance of it: archiving one moves a whole directory, and the map is
+regenerated in the same commit.
 
 Pin the behaviors the script promises in its docstring:
 
 - a map whose entries all resolve exits `0`;
 - a stale entry exits `1`, and the diagnostic names the file, the line, and the
-  regeneration command -- covered for the `.trellis/` archive-move shape, for a
-  path outside `.trellis/` (the case the external command-pack check cannot
-  see), and for a directory whose subtree is gone;
+  regeneration command -- covered for the archive-move shape, for a stale path
+  outside the archived tree, and for a directory whose subtree is gone;
 - resolution is against the **git index**, not the filesystem: a path present on
   disk but untracked is still stale;
 - a missing section, malformed indentation, a skipped level, a `..` component,
@@ -128,33 +126,32 @@ def test_current_map_exits_zero(tmp_path: Path) -> None:
 
 
 def test_archive_move_shape_exits_one(tmp_path: Path) -> None:
-    """The PR #381 shape: the task moved under archive/, the map still names the
-    pre-archive path. This is the structural recurrence the guard exists for."""
+    """The PR #381 shape: the work item moved under archive/, the map still names
+    the pre-archive path. This is the structural recurrence the guard exists
+    for."""
     tree = "\n".join(
         [
             "docs/",
             "  repomix-map.md",
-            ".trellis/",
-            "  tasks/",
-            "    08-15-some-task/",
+            "  work/",
+            "    2026-08-15-some-item/",
             "      prd.md",
         ]
     )
     files = [
         "docs/repomix-map.md",
-        ".trellis/tasks/archive/2026-08/08-15-some-task/prd.md",
+        "docs/work/archive/2026-08/2026-08-15-some-item/prd.md",
     ]
     _, map_path = _repo(tmp_path, files, tree)
     result = _run(str(map_path))
     assert result.returncode == 1
-    assert ".trellis/tasks/08-15-some-task/prd.md" in result.stderr
+    assert "docs/work/2026-08-15-some-item/prd.md" in result.stderr
     assert "update_repomix" in result.stderr
 
 
-def test_stale_entry_outside_trellis_exits_one(tmp_path: Path) -> None:
-    """The external command-pack check only inspects `.trellis/` entries, so a
-    stale path anywhere else is invisible to it. This is the coverage this guard
-    adds, and the reason it is not redundant with the pack."""
+def test_stale_entry_outside_the_archived_tree_exits_one(tmp_path: Path) -> None:
+    """A stale path anywhere else is the same defect and must be caught the same
+    way; the guard is not scoped to the tree that archives."""
     tree = "\n".join(["docs/", "  repomix-map.md", "scripts/", "  gone.sh"])
     _, map_path = _repo(tmp_path, ["docs/repomix-map.md"], tree)
     result = _run(str(map_path))

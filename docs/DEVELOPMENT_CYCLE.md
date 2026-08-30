@@ -21,32 +21,25 @@ should all name the local check that exercised the changed contract.
 
 ## Before Pushing For Review
 
-Use the Trellis full-check script instead of manually remembering the review
-guard list:
+Run the repository's own deterministic gate rather than remembering the guard
+list:
 
 ```bash
-SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0 SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0 bash ~/.agents/bin/sd-ai-command-pack-full-check.sh
+.venv/bin/pre-commit run --all-files
+node scripts/check-review-preflight.mjs
 ```
 
-This is the fast iteration path after the focused deterministic checks for the
-changed surface pass. Re-enable Prism for the final local review when practical.
-If the generated Obsidian KB freshness check trips after a pull, refresh the
-gitignored output before rerunning the gate:
+`pre-commit run --all-files` covers ruff, the shell/Python syntax checks, and
+every mechanical guard under `tools/`. The review preflight then runs the three
+checks that are deliberately not per-file hooks: the CI/review cadence contract
+guard, the Copilot instruction contract guard, and the canonical clean-module
+mypy gate. Review-churn mutation tests stay in GitHub CI rather than being
+repeated locally.
 
-```bash
-.venv/bin/python3 ~/.agents/bin/sd-ai-command-pack-update-spec-kb.py
-```
-
-The pack-provided full-check script runs whitespace checks, the shared
-review preflight in `~/.agents/bin/sd-ai-command-pack-review-preflight.mjs`, AMC's
-repo-local review preflight in `scripts/check-review-preflight.mjs`, the
-copied/generated scope preflight in `~/.agents/bin/sd-ai-command-pack-review-scope.sh`,
-the structural install audit in `~/.agents/bin/sd-ai-command-pack-install-audit.py`,
-current-diff CI classification, configured package scripts when present, and
-optional Prism/Gito review. AMC's repo-local review preflight runs the
-CI/review cadence guard, the Copilot instruction contract guard, the PR-body
-scope guard, and the canonical clean-module mypy gate. Review-churn mutation
-tests remain in GitHub CI instead of being repeated by the local gate.
+Until 2026-08-30 this section named a full-check script shipped by an installed
+command pack, which wrapped the two commands above plus pack-owned preflights.
+That pack is no longer part of this repository, and nothing here depends on a
+machine-side install any more: the gate above runs from a fresh clone.
 
 Install the repository's non-default Git hook stages once per clone:
 
@@ -58,16 +51,14 @@ Install the repository's non-default Git hook stages once per clone:
 The pre-push hook checks the current branch name. The commit-msg hook passes the
 message file to `tools/check_role_name_leaks.py` before Git records it.
 
-When a PR body exists, pass it to local preflight with
-`SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY` or
-`SD_AI_COMMAND_PACK_SCOPE_PR_BODY`, or write it to a file and run
-`python ~/.agents/bin/sd-ai-command-pack-pr-body-scope.py --body-file <path>`.
-The scope guard reads `.sd-ai-command-pack/pr-body-scope.json`, merges it with
-the rule defaults in `~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`, and fails
-broad behavior-changing diffs unless the body contains the matching scope
-section. The five canonical headings are `Automation scope:`,
+A broad behavior-changing PR body should carry the scope section matching the
+changed paths. The five canonical headings are `Automation scope:`,
 `CI/review scope:`, `Tooling/generated scope:`, `Docs/user-facing scope:`, and
-`Runtime/server scope:`.
+`Runtime/server scope:`; `.github/PULL_REQUEST_TEMPLATE.md` prompts for them.
+
+Nothing checks a body for them. The guard that did was pack-owned and left with
+the pack, so this is author discipline confirmed in review — see the note under
+*Local guards* below.
 
 Matching is more permissive than those five literals, so a body that reads
 naturally still passes. `_body_has_heading` anchors each heading to the start of
@@ -87,7 +78,7 @@ Before marking a PR ready, requesting a final remote review, or applying the
 `full-ci` label, run the local gate with Prism enabled when practical:
 
 ```bash
-bash ~/.agents/bin/sd-ai-command-pack-full-check.sh
+.venv/bin/pre-commit run --all-files && node scripts/check-review-preflight.mjs
 ```
 
 For a full local suite, use the normal four-worker default:
@@ -116,12 +107,12 @@ check named `CI Result`.
 Before lane selection, the `changes` job checks the actual pull-request
 `github.head_ref` and runs the AMC-module-load, role-name, and agent-hook
 exception guards under uv-managed Python 3.14. The role-name scan covers
-`src/`, `scripts/`, `.agents/`, and `.trellis/`, so these checks apply to every
-application lane rather than depending on local hooks.
+`src/`, `scripts/`, and `.agents/`, so these checks apply to every application
+lane rather than depending on local hooks.
 
 | Lane | Runs When | Purpose |
 | --- | --- | --- |
-| `lightweight readiness` | Docs, Trellis specs/tasks/audit artifacts, agent prompts/skills, Prism rules, command-pack metadata, review-tooling scripts, or explicitly enumerated repo-only automation with no skipped behavioral tests | Catch whitespace, shell syntax, Python syntax, workflow pip, and Trellis artifact hygiene issues under uv-managed Python 3.14 without installing the full dev environment. |
+| `lightweight readiness` | Docs, specs under `docs/spec/`, work items under `docs/work/`, agent prompts/skills, Prism rules, Copilot review surfaces, review-tooling scripts, or explicitly enumerated repo-only automation with no skipped behavioral tests | Catch whitespace, shell syntax, Python syntax, workflow pip, and work-item artifact hygiene issues under uv-managed Python 3.14 without installing the full dev environment. |
 | `quick test` | App paths changed on routine PR updates where full CI was not requested | Run install smoke, ruff, review-churn lint tests, and focused server compatibility tests. |
 | `test heavy (py3.14)` + `test light (py3.14)` + `coverage (py3.14)` | App-required diffs when a PR is opened/reopened/ready, the `full-ci` label is applied, auto-merge is armed (the `auto_merge_enabled` event and every later push or label event on the armed PR), workflow/dependency files change, manual dispatch runs, or code lands on `main` | Run the heavy and non-heavy pytest partitions concurrently, then combine their raw data and enforce the 85% coverage gate. The light job also owns the console-script, ruff, and mypy gates. |
 
@@ -211,49 +202,20 @@ merge burst cannot cancel a previous merge commit's full-suite backstop run.
 `tools/check_ci_review_contract.py` is the local guard for this cadence
 contract, and `tools/check_copilot_instruction_contract.py` guards the
 mechanical Copilot-instruction contract. Both are text-based and stdlib-only,
-so pre-commit, the lightweight CI lane, and
-`~/.agents/bin/sd-ai-command-pack-full-check.sh` hard-fail on drift between
-workflows, scripts, instructions, and docs without installing the full
-project environment.
+so pre-commit, the lightweight CI lane, and `scripts/check-review-preflight.mjs`
+hard-fail on drift between workflows, scripts, instructions, and docs without
+installing the full project environment.
 
-`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py` is a **best-effort advisory,
-not a hard CI gate.** It fails only when a PR body is supplied — the local
-preflight path (`--body-file` or the `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY`
-/ `SD_AI_COMMAND_PACK_SCOPE_PR_BODY` env vars) — and that body omits the scope
-section matching the changed paths. CI runs it in the lightweight lane
-*without* passing the PR body, so there it only reports detected scope
-categories and never fails the build; it is also not wired into the
-`quick`/`full` lanes, so `src/**` changes are not scope-checked in CI at all.
-Treat the scope headings as author discipline — the PR template prompts for
-them and the pre-PR checklist covers them — not a CI-enforced merge gate.
-Turning it into a real gate would mean passing the PR body plus an `--actor`
-bot-skip (on a pack version that ships it) and running the check in the app
-lanes; that is deliberately not wired today.
+**PR-body scope headings have no gate at all.** They were checked by a
+best-effort advisory in the installed command pack, which fired only when a PR
+body was handed to it locally and never failed CI; it left with the pack on
+2026-08-30. So the headings are author discipline: the PR template prompts for
+them and the pre-PR checklist covers them. Building a real gate would mean a
+repo-owned check that reads the PR body in the app lanes and skips bot authors;
+that is deliberately not wired today, and this paragraph should be rewritten
+rather than quietly outgrown if it ever is.
 
-### Local review-gate helper forwarders (retired)
-
-This repository used to carry five `scripts/sd-ai-command-pack-*` forwarders
-plus `scripts/_sd_pack_forward.py` [absent: retired with the five forwarders it backed], each resolving a pack helper **by name on
-PATH** and re-execing it. They existed because the pack's `sd-check` resolved
-its builtin helper rows only at `<repo>/scripts/sd-ai-command-pack-<name>`; a
-thin install places none of them there, every row reported `unavailable`,
-`unavailable` outranks `passed` in the aggregate, and so `sd-review scope=pr`
-failed closed for every pull request.
-
-The pack fixed that upstream in `#482`: `shipped_helper_path` gates on install
-**mode**, not on which files happen to exist — a repository whose receipt pins
-it thin resolves helpers from the machine install, and `repo/scripts/` still
-wins everywhere else. Measured here before removal: all five names resolved to
-`~/.agents/bin/`, so the forwarders were already bypassed and deleting them
-removed dead files rather than a live resolution path.
-
-They are gone, along with their `installed-targets.txt` entries and
-`tests/test_sd_check_helper_forwarders.py` [absent: retired with the forwarders it covered]. Do not reintroduce them: resolving
-a pack helper by name on PATH means the answering install has nothing to do
-with the pack this repository is pinned to, which is the version split the pack
-now forbids in its own skills.
-
-## Task Archival And The Generated Repository Map
+## Work-Item Archival And The Generated Repository Map
 
 `docs/repomix-map.md` is a generated structural map of the tracked tree,
 refreshed by `./scripts/update_repomix`. Nothing regenerates it automatically,
@@ -261,27 +223,22 @@ so it goes stale whenever files move and the map does not move with them.
 `tools/check_repomix_map_freshness.py` fails when a path the map lists is no
 longer tracked; read that script's docstring for the full contract.
 
-**`task.py archive` needs no map refresh.** The map excludes
-`.trellis/tasks/**` (`--ignore` in `scripts/update_repomix`), so relocating
-`.trellis/tasks/<slug>/` into `.trellis/tasks/archive/<month>/` changes nothing
-the map lists. Archive as normal; its auto-commit passes the guard.
+**Archiving a work item needs a map refresh.** Moving
+`docs/work/<slug>/` into `docs/work/archive/<month>/` moves paths the map
+lists, so the same commit must carry a regenerated map.
 
-That exclusion exists because the alternative was unshippable, and the reasoning
-is worth knowing before anyone reverses it. While task directories were mapped,
-completion-mode finish-work stranded map entries by construction — `task.py
-archive` moves the tree *after* the map was last generated — so the archive
-commit had to carry a regenerated map to pass the guard. But the command pack's
-completion finalization requires the delta after the last work commit to contain
-only bookkeeping paths, and rejects `docs/repomix-map.md` there with
-`bundle_scope_invalid`. Any commit refreshing the map lands at or after the
-archive move, so it is always inside that delta: the archive commit could
-satisfy the freshness guard or the finalization gate, never both. Task
-directories were also over half the artifact (796 of 1497 entries) and are
-session bookkeeping rather than repository structure.
+That was not always true, and the reason it changed is worth knowing before
+anyone reverses it. Work items used to be excluded from the map, because the
+command pack's completion finalization required the delta after the last work
+commit to contain only bookkeeping paths and rejected `docs/repomix-map.md`
+there with `bundle_scope_invalid` — so an archive commit could satisfy the
+freshness guard or the finalization gate, never both, and excluding the moving
+tree was the only shippable answer. That gate left with the pack on 2026-08-30.
+The exclusion went with it, and the ordinary rule now applies uniformly.
 
-Everything else still follows the ordinary rule: when a change moves or deletes
-files in any *other* tree, regenerate the map with `./scripts/update_repomix`
-and commit the result alongside that change.
+That ordinary rule: when a change moves or deletes tracked files anywhere,
+regenerate the map with `./scripts/update_repomix` and commit the result
+alongside that change.
 
 ## Release Process
 

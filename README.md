@@ -110,9 +110,8 @@ package index, not the public Python package index.
 The generated Repomix repository map lives at
 [`docs/repomix-map.md`](docs/repomix-map.md). It is a metadata-only map of the
 repo structure for quick human or LLM orientation; it does not embed source file
-bodies. Trellis task directories (`.trellis/tasks/**`) are excluded — they are
-session bookkeeping rather than repository structure, and the comment in
-`scripts/update_repomix` explains why restoring them is not a free change.
+bodies. Its only exclusion is the artifact itself; refresh it with
+`scripts/update_repomix` in the same commit that moves or adds tracked files.
 
 Refresh it after code, docs, tests, scripts, or platform-adapter tree changes:
 
@@ -1369,10 +1368,11 @@ table in this file.
 
 ### Agent skill sync
 
-The tracked `.agents/skills/security-best-practices` and
-`.agents/skills/amc-server-compatibility` copies are the canonical repo-local
-sources for the approved curated and project-specific skills. Synchronize them
-into every supported platform root after cloning or updating either skill:
+The tracked tree under `.agents/skills/` is the canonical repo-local source for
+this project's skills. `scripts/sync-agent-skills.py` enumerates that directory
+rather than carrying a roster, so adding or removing a skill needs no edit to
+the script. Synchronize into every supported platform root after cloning or
+updating a skill:
 
 ```bash
 python3 scripts/sync-agent-skills.py

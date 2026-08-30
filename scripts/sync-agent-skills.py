@@ -19,7 +19,28 @@ PLATFORM_ROOTS = (
     Path(".github/skills"),
     Path(".opencode/skills"),
 )
-DEFAULT_SKILLS = ("security-best-practices", "amc-server-compatibility")
+
+
+def discovered_skills(repo_root: Path) -> tuple[str, ...]:
+    """Every skill directory under `.agents/skills`, in sorted order.
+
+    A hard-coded roster stood here and named `security-best-practices`, which
+    stopped existing: every run then aborted before touching the skill that is
+    still here. Enumerating the source directory cannot go stale that way -- a
+    skill added or removed there needs no edit to this script.
+    """
+    source_root = repo_root / SOURCE_ROOT
+    if not source_root.is_dir():
+        return ()
+    return tuple(
+        sorted(
+            entry.name
+            for entry in source_root.iterdir()
+            if entry.is_dir() and entry.name not in IGNORED_NAMES
+        )
+    )
+
+
 IGNORED_NAMES = {"__pycache__", ".DS_Store"}
 
 
@@ -158,7 +179,7 @@ def sync_skill(
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     repo_root = args.repo_root.resolve(strict=False)
-    skills = tuple(dict.fromkeys(args.skills or DEFAULT_SKILLS))
+    skills = tuple(dict.fromkeys(args.skills or discovered_skills(repo_root)))
     check_failed = False
 
     try:

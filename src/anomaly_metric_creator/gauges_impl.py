@@ -1,7 +1,7 @@
 """Long-form / 4-column ``gauges.csv`` writer.
 
 Extracted verbatim from ``legacy.py`` (decomposition step 3; see
-``.trellis/tasks/07-02-legacy-monolith-decomposition/design.md``).
+``docs/work/archive/2026-07/2026-07-02-legacy-monolith-decomposition/design.md``).
 Reads the shared CSV primitives from ``csv_layout`` and the timestamp
 parser from ``timeutil``; ``legacy.py`` re-imports ``write_gauges_csv``
 so the historic surface is unchanged.
