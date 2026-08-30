@@ -133,11 +133,12 @@ are mirrored byte-for-byte into `.claude`, `.codex`, `.gemini`, `.github`, and
 `python scripts/sync-agent-skills.py` to fan out and
 `python scripts/sync-agent-skills.py --check` to verify every mirror matches.
 
-`security-best-practices` is **vendored from upstream**
-[`openai/skills`](https://github.com/openai/skills) (`skills/.curated/security-best-practices`,
-Apache-2.0), not authored here. Its
-[`PROVENANCE.md`](.agents/skills/security-best-practices/PROVENANCE.md) records
-the vendored upstream commit and the re-vendor + fan-out refresh procedure.
+`.agents/skills` is the inventory; this file does not restate it. A paragraph
+here described a vendored `security-best-practices` skill and linked its
+`PROVENANCE.md` long after both were deleted, which is what a hand-maintained
+list of directories does. Any skill vendored from upstream carries its own
+`PROVENANCE.md` beside its `SKILL.md`, recording the upstream commit and the
+re-vendor procedure.
 
 ## Usage
 
