@@ -1,0 +1,33 @@
+# Installed by `sd-review setup-github`. Opt-in: nothing installs this file, and
+# deleting it removes the lane.
+#
+# What it does: resolves this pull request's diff, runs `route()` over the
+# repository's `.github/sd-review.json` policy, and prints the resulting plan.
+#
+# What it does not do: it requests no reviewer, posts no comment, sets no label,
+# and holds `contents: read` and nothing else, so it cannot affect this pull
+# request's outcome. Asking a remote reviewer for a review is a separate change
+# with its own decision record.
+name: sd-review route
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    name: route
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # `route()` measures the branch against its merge base, which a
+          # shallow clone does not contain.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Report the routing plan
+        uses: platypeeps/sd-ai-command-pack/actions/review-route@1c63fe57040cb1b54e3f365eb557fccf64f3638f
