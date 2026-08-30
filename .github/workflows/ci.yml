@@ -62,7 +62,7 @@ jobs:
           role_name_files=()
           while IFS= read -r path; do
             role_name_files+=("$path")
-          done < <(git ls-files src scripts .agents .trellis)
+          done < <(git ls-files src scripts .agents)
           if [ "${#role_name_files[@]}" -gt 0 ]; then
             uv run --python 3.14 --no-project python tools/check_role_name_leaks.py "${role_name_files[@]}"
           fi
@@ -219,7 +219,7 @@ jobs:
       - name: Set up uv for lightweight guards
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
-      - name: Harden uv cache permissions for pack subprocess guards
+      - name: Harden uv cache permissions for the uv-run guards
         shell: bash
         run: install -d -m 0700 -- "$UV_CACHE_DIR"
 
@@ -259,13 +259,13 @@ jobs:
         run: |
           printf '%s\n' \
             'docs/REVIEW_PATTERNS.md' \
-            '.github/prompts/review-pr.prompt.md' \
-            '.sd-ai-command-pack/installed-targets.txt' > /tmp/lightweight-changes.txt
+            '.github/instructions/anomaly-metric-creator.instructions.md' \
+            '.prism/rules.json' > /tmp/lightweight-changes.txt
           bash scripts/classify-ci-changes.sh /tmp/lightweight-changes.txt > /tmp/classifier.out
           grep -q '^lightweight_only=true$' /tmp/classifier.out
           grep -q '^app_required=false$' /tmp/classifier.out
 
-      - name: Syntax and Trellis artifact guards
+      - name: Syntax and artifact guards
         shell: bash
         run: |
           set -euo pipefail

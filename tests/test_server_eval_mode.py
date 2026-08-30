@@ -1,4 +1,4 @@
-"""Eval-mode ground-truth wall (Trellis task 07-02-mcp-eval-mode-hardening).
+"""Eval-mode ground-truth wall (docs/work/archive/2026-07/2026-07-02-mcp-eval-mode-hardening).
 
 `--mcp-eval-mode` hides every rubric-bearing surface so an agent evaluated
 through `/mcp` cannot read the scoring key. These tests pin: the refusal on

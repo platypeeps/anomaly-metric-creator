@@ -1,6 +1,6 @@
 ---
 name: amc-server-compatibility
-description: "Guide AMC server-mode Kubernetes, Helm, command-trace, mutation-overlay, and debug-UI compatibility work. Use when implementing or reviewing `amc serve`, fake Kubernetes API paths, `kubectl`/Helm command rendering, `resource_snapshot()` or `SimulationMutations` behavior, command trace/search/export behavior, or server-mode Trellis task backlog items."
+description: "Guide AMC server-mode Kubernetes, Helm, command-trace, mutation-overlay, and debug-UI compatibility work. Use when implementing or reviewing `amc serve`, fake Kubernetes API paths, `kubectl`/Helm command rendering, `resource_snapshot()` or `SimulationMutations` behavior, command trace/search/export behavior, or server-mode work items under `docs/work/`."
 ---
 
 # AMC Server Compatibility
@@ -12,11 +12,8 @@ create a second Kubernetes state model.
 
 ## Start Here
 
-1. Run the Trellis pre-dev context flow before editing:
-
-   ```bash
-   python3 ./.trellis/scripts/get_context.py --mode packages
-   ```
+1. Read the work item you are implementing under `docs/work/<date>-<slug>/`
+   (`prd.md`, then `design.md` and `implement.md` when they exist).
 
 2. Read the relevant specs for the slice:
    - `docs/spec/amc/backend/api-cli-server.md` for CLI, command API, Kubernetes API, Helm, trace bundles.

@@ -76,7 +76,7 @@ def _write_minimal_contract(root: Path) -> None:
         Automation scope:, CI/review scope:, Tooling/generated scope:,
         Docs/user-facing scope:, or Runtime/server scope: section.
 
-        ## Pre-PR checklist headings (canonical in Trellis)
+        ## Pre-PR checklist headings (canonical in the PR template)
         """,
     )
     with (root / ".github/instructions/anomaly-metric-creator.instructions.md").open(

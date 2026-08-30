@@ -131,11 +131,10 @@ repos:
         language: python
         files: ^\.github/workflows/.*\.ya?ml$
         pass_filenames: true
-      # The CI classifier and Trellis review scripts decide whether remote
-      # Actions can take the lightweight path. Keep shell syntax failures local
-      # so a docs/tooling-only PR does not spend a runner just to discover a
-      # malformed script. Matched by shape so an installed command-pack refresh
-      # never has to edit this hook.
+      # The CI classifier decides whether remote Actions can take the
+      # lightweight path. Keep shell syntax failures local so a docs/tooling-only
+      # PR does not spend a runner just to discover a malformed script. Matched
+      # by shape rather than by roster.
       - id: shell-syntax
         name: validate shell script syntax
         # `set -e` is load-bearing: without it the loop exits with the status
@@ -153,17 +152,17 @@ repos:
         name: guard CI/review cadence contract
         entry: python tools/check_ci_review_contract.py
         language: python
-        files: ^(\.github/workflows/.*\.ya?ml|scripts/(classify-ci-changes|classify_ci_changes)\.sh|scripts/check-review-preflight\.mjs|tools/check_ci_review_contract\.py|docs/DEVELOPMENT_CYCLE\.md|\.sd-ai-command-pack/pr-body-scope\.json|\docs/spec/amc/backend/testing-quality\.md)$
+        files: ^(\.github/workflows/.*\.ya?ml|scripts/(classify-ci-changes|classify_ci_changes)\.sh|scripts/check-review-preflight\.mjs|tools/check_ci_review_contract\.py|docs/DEVELOPMENT_CYCLE\.md|\.pre-commit-config\.yaml|docs/spec/amc/backend/testing-quality\.md)$
         pass_filenames: false
-      # Keep Copilot's mechanical review instructions in sync with the Trellis
-      # specs, PR template checklist, copied adapter policy, and local review
-      # preflight wiring. Reviewer judgment stays in prose; drift-prone anchors
+      # Keep Copilot's mechanical review instructions in sync with docs/spec,
+      # the PR template checklist, the rendered skill policy, and the local
+      # review preflight wiring. Reviewer judgment stays in prose; drift-prone anchors
       # get enforced here and in the review-churn test suite.
       - id: copilot-instruction-contract
         name: guard Copilot instruction contract
         entry: python tools/check_copilot_instruction_contract.py
         language: python
-        files: ^(\.github/(instructions/anomaly-metric-creator\.instructions\.md|PULL_REQUEST_TEMPLATE\.md|agents/trellis-.*\.agent\.md|skills/trellis-.+|copilot/hooks.*|hooks/trellis\.json|prompts/.*)|\.gito/.+|\.prism/rules\.schema\.json|scripts/check-review-preflight\.mjs|tools/check_copilot_instruction_contract\.py|\.sd-ai-command-pack/.+|\docs/spec/amc/backend/(testing-quality|documentation-review)\.md)$
+        files: ^(\.github/(copilot-instructions\.md|instructions/anomaly-metric-creator\.instructions\.md|PULL_REQUEST_TEMPLATE\.md|skills/.+)|\.prism/rules\.json|scripts/check-review-preflight\.mjs|tools/check_copilot_instruction_contract\.py|docs/spec/amc/backend/(testing-quality|documentation-review)\.md)$
         pass_filenames: false
       # Forbid unfinished template placeholders in committed work items.
       # Finish-work output is repository history, not a scratchpad, so fill
@@ -180,7 +179,7 @@ repos:
       # return the single `0` a criterion claims, and `\s`/`\d`/`\w` are
       # GNU/PCRE-only escapes that stock BSD grep matches as literal letters.
       - id: task-criteria-commands
-        name: guard Trellis acceptance-criteria commands
+        name: guard acceptance-criteria commands
         entry: python tools/check_task_criteria_commands.py
         language: python
         files: ^docs/work/.*\.md$

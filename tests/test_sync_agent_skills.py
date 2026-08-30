@@ -7,7 +7,10 @@ import sys
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "sync-agent-skills.py"
-SKILL = "security-best-practices"
+# A fixture name, seeded into a tmp_path tree. It is deliberately not the
+# name of a real skill: a roster naming a skill that had stopped existing
+# is what left `sync-agent-skills.py` aborting on every run.
+SKILL = "fixture-skill"
 REPO_SKILL = "amc-server-compatibility"
 
 
@@ -72,7 +75,7 @@ def test_sync_replaces_stale_files_and_then_passes_check(tmp_path: Path) -> None
     check = _run(repo_root, "--skill", SKILL, "--check")
 
     assert update.returncode == 0, update.stderr
-    assert "updated: .claude/skills/security-best-practices" in update.stdout
+    assert f"updated: .claude/skills/{SKILL}" in update.stdout
     assert not (stale / "remove-me.txt").exists()
     assert check.returncode == 0, check.stdout + check.stderr
 
@@ -86,3 +89,28 @@ def test_dry_run_does_not_create_claude_root(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert f"would-install: .claude/skills/{SKILL}" in result.stdout
     assert not (repo_root / ".claude").exists()
+
+
+def test_missing_source_root_fails_instead_of_reporting_a_clean_sync(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    result = _run(repo_root)
+
+    assert result.returncode == 1, result.stdout
+    assert "no skills to sync" in result.stderr
+    assert not (repo_root / ".claude").exists()
+
+
+def test_empty_source_root_fails_check_instead_of_certifying_nothing(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / ".agents" / "skills").mkdir(parents=True)
+
+    result = _run(repo_root, "--check")
+
+    assert result.returncode == 1, result.stdout
+    assert "no skills to sync" in result.stderr

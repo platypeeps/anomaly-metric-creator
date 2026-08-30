@@ -1,7 +1,7 @@
 """Combine per-component CSVs into the unified ``combined_metrics_unified.csv``.
 
 Extracted verbatim from ``legacy.py`` (decomposition step 5; see
-``.trellis/tasks/07-02-legacy-monolith-decomposition/design.md``). Holds
+``docs/work/archive/2026-07/2026-07-02-legacy-monolith-decomposition/design.md``). Holds
 the wide (streaming + materialized) and long-form combine writers, the
 autodiscovery helper, and the defensive monotonic pre-scan. Reads the
 shared CSV primitives from ``csv_layout`` and the atomic writer from

@@ -110,9 +110,11 @@ package index, not the public Python package index.
 The generated Repomix repository map lives at
 [`docs/repomix-map.md`](docs/repomix-map.md). It is a metadata-only map of the
 repo structure for quick human or LLM orientation; it does not embed source file
-bodies. Trellis task directories (`.trellis/tasks/**`) are excluded — they are
-session bookkeeping rather than repository structure, and the comment in
-`scripts/update_repomix` explains why restoring them is not a free change.
+bodies. Two tracked paths are absent from it: the artifact itself, excluded by
+the `--ignore` flag in `scripts/update_repomix`, and `uv.lock`, excluded by
+Repomix's built-in default patterns. Everything else tracked is listed. Refresh
+it with `scripts/update_repomix` in the same commit that moves or adds tracked
+files.
 
 Refresh it after code, docs, tests, scripts, or platform-adapter tree changes:
 
@@ -131,11 +133,12 @@ are mirrored byte-for-byte into `.claude`, `.codex`, `.gemini`, `.github`, and
 `python scripts/sync-agent-skills.py` to fan out and
 `python scripts/sync-agent-skills.py --check` to verify every mirror matches.
 
-`security-best-practices` is **vendored from upstream**
-[`openai/skills`](https://github.com/openai/skills) (`skills/.curated/security-best-practices`,
-Apache-2.0), not authored here. Its
-[`PROVENANCE.md`](.agents/skills/security-best-practices/PROVENANCE.md) records
-the vendored upstream commit and the re-vendor + fan-out refresh procedure.
+`.agents/skills` is the inventory; this file does not restate it. A paragraph
+here described a vendored `security-best-practices` skill and linked its
+`PROVENANCE.md` long after both were deleted, which is what a hand-maintained
+list of directories does. Any skill vendored from upstream carries its own
+`PROVENANCE.md` beside its `SKILL.md`, recording the upstream commit and the
+re-vendor procedure.
 
 ## Usage
 
@@ -1369,10 +1372,11 @@ table in this file.
 
 ### Agent skill sync
 
-The tracked `.agents/skills/security-best-practices` and
-`.agents/skills/amc-server-compatibility` copies are the canonical repo-local
-sources for the approved curated and project-specific skills. Synchronize them
-into every supported platform root after cloning or updating either skill:
+The tracked tree under `.agents/skills/` is the canonical repo-local source for
+this project's skills. `scripts/sync-agent-skills.py` enumerates that directory
+rather than carrying a roster, so adding or removing a skill needs no edit to
+the script. Synchronize into every supported platform root after cloning or
+updating a skill:
 
 ```bash
 python3 scripts/sync-agent-skills.py

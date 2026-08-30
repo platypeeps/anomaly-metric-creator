@@ -48,9 +48,9 @@ and its documented/tested lockstep surfaces in the same change. Sources:
 
 ## Adapter Rule
 
-Keep platform directories as Trellis adapters. Do not copy durable project
+Keep platform directories as spec adapters. Do not copy durable project
 rules into every Codex, Claude, Copilot, Gemini, or OpenCode file; put the rule
-in `docs/spec/` and have platform files load or point to Trellis. Sources:
+in `docs/spec/` and have platform files load or point to those specs. Sources:
 `docs/spec/amc/backend/documentation-review.md`; `.agents/`; `.codex/`;
 `.claude/`; `.gemini/`; `.github/`; `.opencode/`.
 
@@ -64,9 +64,9 @@ in `docs/spec/` and have platform files load or point to Trellis. Sources:
 - Did I reuse shared trace/search/config/schema validators instead of local
   casts? Sources: `src/anomaly_metric_creator/server_traces.py`;
   `src/anomaly_metric_creator/trace_bundle.py`; `tests/test_trace_bundle.py`.
-- Did I add or update a Trellis spec citation for any new convention? Sources:
+- Did I add or update a `docs/spec/` citation for any new convention? Sources:
   `docs/spec/amc/backend/documentation-review.md`;
-  `.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/prd.md`.
+  `docs/work/archive/2026-06/2026-06-25-consolidate-agent-docs-trellis/prd.md`.
 - Am I removing or replacing a re-export / alias / re-import block? Then check
   what it was *masking* before deleting it. A late `NAME = _other.NAME`
   reassignment silently overwrites an earlier duplicate definition of the same

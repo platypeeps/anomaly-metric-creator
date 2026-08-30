@@ -19,7 +19,7 @@ commit, and assert the retained semantic fields before the byte hash. For
 reads no metric CSVs, but its changed `files` list is part of the new golden
 contract. Sources: `tests/test_instances_per_component.py`;
 `tests/test_schema_file.py`;
-`.trellis/tasks/archive/2026-07/07-18-perf-heavy-fixture-trim/prd.md`.
+`docs/work/archive/2026-07/2026-07-18-perf-heavy-fixture-trim/prd.md`.
 
 Use canonical registries and helpers instead of parallel maps:
 `COMPONENTS`, `SCENARIOS`, `DERIVATIONS`, `TOPOLOGY`,
@@ -158,7 +158,7 @@ light worker pool while preserving file-owned fixture locality. Sources:
 - Trigger: a change to the heavy/light marker boundary, either pytest worker
   count, xdist distribution mode, or the GitHub-hosted runner capacity premise.
   Sources: `.github/workflows/ci.yml`; `tests/conftest.py`;
-  `.trellis/tasks/archive/2026-07/07-18-perf-ci-worker-counts/design.md`.
+  `docs/work/archive/2026-07/2026-07-18-perf-ci-worker-counts/design.md`.
 
 ### 2. Signatures
 
@@ -180,7 +180,7 @@ light worker pool while preserving file-owned fixture locality. Sources:
 - The heavy and light selectors must remain disjoint and their collected counts
   must sum to the full suite. Sources: `tests/conftest.py`;
   `tests/test_heavy_marker.py`; `.github/workflows/ci.yml`;
-  `.trellis/tasks/archive/2026-07/07-18-perf-ci-worker-counts/prd.md`.
+  `docs/work/archive/2026-07/2026-07-18-perf-ci-worker-counts/prd.md`.
 
 ### 4. Validation & Error Matrix
 
@@ -193,7 +193,7 @@ light worker pool while preserving file-owned fixture locality. Sources:
 
 Sources: `tools/check_ci_review_contract.py`;
 `tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
-`.trellis/tasks/archive/2026-07/07-20-perf-ci-heavy-worker-trial/prd.md`.
+`docs/work/archive/2026-07/2026-07-20-perf-ci-heavy-worker-trial/prd.md`.
 
 ### 5. Good/Base/Bad Cases
 
@@ -213,7 +213,7 @@ Sources: `tools/check_ci_review_contract.py`;
 - Before publishing a worker-count change, collect the heavy, light, and full
   suites and assert that the first two counts sum to the third. Sources:
   `tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
-  `.trellis/tasks/archive/2026-07/07-18-perf-ci-worker-counts/implement.md`.
+  `docs/work/archive/2026-07/2026-07-18-perf-ci-worker-counts/implement.md`.
 
 ### 7. Wrong vs Correct
 
@@ -248,13 +248,13 @@ Ruff F401 is selected in `pyproject.toml` and scoped to tests by
 
 Additional mechanical guards catch recent review-churn patterns before PR
 review: syntax-only `ast.parse` over Python files, Ruff F841 unused locals for
-runtime/tools/hooks, agent-hook exception-shape checks, Trellis placeholder
-and journal/index commit-list consistency checks, Copilot instruction contract
+runtime/tools/hooks, agent-hook exception-shape checks, work-item placeholder
+checks, Copilot instruction contract
 checks, trace-payload validation anti-pattern checks, and the canonical
 clean-module mypy gate in `tools/check_mypy_gate.py`. CI invokes the
 AMC-module-load, role-name, and agent-hook-exception guards from the always-run
 changes job under uv-managed Python 3.14; role-name live-tree coverage includes
-`src/`, `scripts/`, `.agents/`, and `.trellis/`. Keep these hooks
+`src/`, `scripts/`, and `.agents/`. Keep these hooks
 stdlib-only where they are local scripts, with the documented `0`/`1`/`2` exit
 contract and acceptance tests over both temporary fixtures and the live repo
 tree. `tools/benchmark_combine.py` is the one intentional exception to the
@@ -292,36 +292,30 @@ from the pre-PR CI-hygiene heading. Sources: `pyproject.toml`;
 
 ## Local and Remote Review Gates
 
-Use `~/.agents/bin/sd-ai-command-pack-full-check.sh` as the local review gate rather than
-manually assembling the recurring lint/test list. The pack-provided script runs
-deterministic whitespace checks, the shared review preflight through
-`~/.agents/bin/sd-ai-command-pack-review-preflight.mjs`, AMC's repo-local review
-preflight through `scripts/check-review-preflight.mjs`, copied/generated scope
-checks through `~/.agents/bin/sd-ai-command-pack-review-scope.sh`, the structural
-install audit through `~/.agents/bin/sd-ai-command-pack-install-audit.py`,
-current-diff CI classification, configured package scripts when present, and
-optional Prism/Gito review. AMC's repo-local review preflight runs the CI/review
-cadence contract guard, the Copilot instruction contract guard, the PR-body
-scope guard, and the canonical clean-module mypy gate. Review-churn mutation
-tests run in GitHub CI instead of being repeated by the repo-local preflight. Use
-`SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` or
-`SD_AI_COMMAND_PACK_FULL_CHECK_GITO=0` to skip optional AI review while
-iterating after the focused deterministic checks pass; re-enable Prism for the
-final local review when practical. If the generated Obsidian KB freshness check
-fails after a pull, refresh the gitignored output with
-`.venv/bin/python3 ~/.agents/bin/sd-ai-command-pack-update-spec-kb.py` before
-rerunning the gate. Use `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_FAIL_ON`,
-`SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_MAX_FINDINGS`, or
-`SD_AI_COMMAND_PACK_FULL_CHECK_PRISM_RULES` to steer Prism without editing the script.
-Sources: `~/.agents/bin/sd-ai-command-pack-full-check.sh`;
-`~/.agents/bin/sd-ai-command-pack-review-preflight.mjs`;
+The local review gate is two repo-owned commands, run in this order rather
+than assembled by hand each time:
+
+```bash
+.venv/bin/pre-commit run --all-files
+node scripts/check-review-preflight.mjs
+```
+
+`pre-commit run --all-files` covers ruff, the syntax gates, and every
+mechanical guard under `tools/`. The review preflight then runs the three
+checks that are deliberately not per-file hooks: the CI/review cadence contract
+guard, the Copilot instruction contract guard, and the canonical clean-module
+mypy gate. Review-churn mutation tests run in GitHub CI instead of being
+repeated locally, and no AI review provider is wired into the local gate.
+
+This section named an installed command pack's full-check script until
+2026-08-30, along with the pack's own preflights, scope checks, install audit,
+Obsidian KB refresh, and Prism/Gito toggles. None of that is part of this
+repository any more, and the gate above runs from a fresh clone with no
+machine-side install.
+Sources: `.pre-commit-config.yaml`;
 `scripts/check-review-preflight.mjs`;
-`~/.agents/bin/sd-ai-command-pack-review-scope.sh`;
-`~/.agents/bin/sd-ai-command-pack-install-audit.py`;
 `tools/check_ci_review_contract.py`;
 `tools/check_copilot_instruction_contract.py`;
-`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`;
-`.sd-ai-command-pack/pr-body-scope.json`;
 `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`;
 `tests/test_copilot_instruction_contract.py`;
@@ -556,7 +550,7 @@ source. Sources: `.github/workflows/ci.yml`;
   <stdlib-only-check> [paths...]`.
 - Lightweight cache boundary: run
   `install -d -m 0700 -- "$UV_CACHE_DIR"` after `setup-uv` and before any
-  pack-backed Python guard.
+  `uv run` Python guard.
 - Shell syntax gate: `bash -n <review-tooling-shell-scripts...>`.
 
 ### 3. Contracts
@@ -565,20 +559,24 @@ source. Sources: `.github/workflows/ci.yml`;
   for a documentation-only tip.
 - `labeled` selects full CI when the applied label is `full-ci` or the event's
   pull request already has auto-merge armed.
-- `.sd-ai-command-pack/**`, `.trellis/audit/**`, and the command-pack shell
-  entrypoints are lightweight review/documentation surfaces. Dependency and
-  workflow paths override that classification and force the full lane.
+- `docs/spec/**`, `docs/work/**`, the rendered skill trees, the Copilot review
+  surfaces, and `.prism/rules.json` are lightweight review/documentation
+  surfaces. Dependency and workflow paths override that classification and
+  force the full lane.
 - `is_repo_tooling_path` may classify an explicit script lightweight only when
   doing so skips no behavioral test. Tested scripts and all `tools/` paths stay
   application-required; under-classification is safer than silently dropping
   coverage.
 - Python syntax coverage includes top-level `scripts/*.py`. Both the workflow
-  and pre-commit shell gates cover `sd-ai-command-pack-toolchain.sh` and
-  `sd-ai-command-pack-shell-lib.sh`.
-- `setup-uv` may expose a cache directory with group/other permissions. The
-  lightweight lane must make that inherited override private before a guard
-  imports `sd_ai_command_pack_lib`; the library's fail-closed cache boundary
-  remains unchanged.
+  and pre-commit shell gates enumerate the tracked shell scripts under
+  `scripts/` rather than naming them, so a new script is covered without an
+  edit here.
+- `setup-uv` may expose a cache directory with group/other permissions, and
+  the lightweight lane makes that inherited override private before running a
+  `uv run` guard. The check that made this load-bearing was a fail-closed cache
+  boundary in the command pack's library, which left with the pack on
+  2026-08-30; the hardening step is kept as plain hygiene, and nothing now
+  fails if it is skipped.
 
 ### 4. Validation & Error Matrix
 
@@ -586,26 +584,28 @@ source. Sources: `.github/workflows/ci.yml`;
 | --- | --- |
 | Manual dispatch of a docs-only tip | `app_required=true`; full lane eligible |
 | Any later label event on an armed PR | `full_ci_requested=true` |
-| Pack metadata or Trellis audit artifact only | lightweight lane |
+| Spec, work-item, or review-surface paths only | lightweight lane |
 | Dependency or workflow path mixed into that diff | full application lane |
 | Python guard cannot run under managed 3.14 | lightweight job fails |
-| Inherited `UV_CACHE_DIR` permits group/other access | harden it to `0700` before pack-backed guards; never relax the library check |
+| Inherited `UV_CACHE_DIR` permits group/other access | harden it to `0700` before the `uv run` guards |
 | Toolchain/shared-library shell syntax is invalid | local and remote syntax gates fail |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `.sd-ai-command-pack/manifest.json` plus
-  `.trellis/audit/ledger.md` stays lightweight, the uv cache is private, and
-  the lane reports review tooling.
+- Good: `docs/spec/amc/backend/index.md` plus `.prism/rules.json` stays
+  lightweight, the uv cache is private, and the lane reports review tooling.
 - Base: an ordinary runtime Python diff remains application-required.
 - Bad: a docs-only manual dispatch remains lightweight, or a non-`full-ci`
   label on an armed PR rebuilds the required context from the quick lane, or
-  pack-backed guards inherit a group/other-accessible uv cache.
+  the lightweight `uv run` guards inherit a group/other-accessible uv cache.
 
 ### 6. Tests Required
 
-- `tests/test_ci_change_classifier.py` asserts pack/audit positive cases and
-  runtime/dependency/workflow negative cases.
+- `tests/test_ci_change_classifier.py` asserts the lightweight positive cases
+  — docs, specs, platform skill roots, rendered skill payloads, review
+  surfaces, repo-owned tooling — and the runtime/dependency/workflow negative
+  cases. Pack scripts are not among them: since the thin conversion they live
+  on the machine, so no diff in this tree can contain one.
 - `tests/test_ci_review_contract.py` mutation-tests the labeled auto-merge
   clause, manual-dispatch force-app, every managed-Python lightweight guard
   command, private-cache setup ordering, and both syntax lists against the live
@@ -759,7 +759,7 @@ actually run rather than skim.
 
 - Every changed function with a docstring has its docstring updated in the same
   diff.
-- Grep every changed symbol name against the Trellis specs, `README.md`, and
+- Grep every changed symbol name against the specs under `docs/spec/`, `README.md`, and
   `docs/`, and update prose that describes it.
 - When you change a default, precedence rule, count, edge list, or dispatch
   order, grep for the *old value/word* across the docstring, in-file section

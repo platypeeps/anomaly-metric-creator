@@ -3,7 +3,7 @@
 
 Copilot instructions intentionally contain reviewer judgment that cannot be
 fully tested. This checker locks the mechanical pieces that should not drift:
-the canonical Trellis routing, checklist heading lockstep, review-cycle
+the canonical spec routing, checklist heading lockstep, review-cycle
 reduction anchors, generated/copied adapter policy, copied path existence, and
 local preflight wiring.
 
@@ -171,7 +171,7 @@ def _extract_template_headings(text: str) -> list[str]:
 
 
 def _extract_copilot_headings(text: str) -> list[str]:
-    section = _section_text(text, "## Pre-PR checklist headings (canonical in Trellis)")
+    section = _section_text(text, "## Pre-PR checklist headings (canonical in the PR template)")
     headings: list[str] = []
     for line in section.splitlines():
         match = re.match(r"\d+\.\s+\*\*(.+?)\*\*", line.strip())

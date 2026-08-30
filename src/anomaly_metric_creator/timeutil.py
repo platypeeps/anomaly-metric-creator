@@ -1,7 +1,7 @@
 """Timestamp parsing and unix-nano conversion shared across writers.
 
 Extracted verbatim from ``legacy.py`` (decomposition step 2; see
-``.trellis/tasks/07-02-legacy-monolith-decomposition/design.md``).
+``docs/work/archive/2026-07/2026-07-02-legacy-monolith-decomposition/design.md``).
 Shared by the combine/gauge merge writers, the OTLP payload builders,
 and ``server_mcp`` (via ``state.legacy._parse_csv_timestamp``), so it
 lives in its own leaf module rather than inside any one consumer.

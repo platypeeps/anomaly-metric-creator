@@ -29,12 +29,12 @@ The content is organized as follows:
 ## Notes
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Files matching these patterns are excluded: docs/repomix-map.md, .trellis/tasks/**
+- Files matching these patterns are excluded: docs/repomix-map.md
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 
 # User Provided Header
-Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Trellis task directories under .trellis/tasks/ are excluded; see the comment in this script. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform-adapter tree changes.
+Generated metadata-only repository map for anomaly-metric-creator. This artifact is generated with --no-files: it contains repository metadata and directory structure only, with no source file bodies. Refresh with scripts/update_repomix after code, docs, tests, scripts, or platform skill tree changes.
 
 # Directory Structure
 `````
@@ -73,9 +73,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
 .github/
   instructions/
     anomaly-metric-creator.instructions.md
-  prompts/
-    continue.prompt.md
-    finish-work.prompt.md
   skills/
     amc-server-compatibility/
       agents/
@@ -101,8 +98,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
 .prism/
   rules.json
   rules.schema.json
-config/
-  routed-review-setup-v1.json
 docs/
   spec/
     amc/
@@ -118,7 +113,6 @@ docs/
         operations-security-logging.md
         quality-guidelines.md
         scenarios-and-data.md
-        sd-review-kb-false-block.md
         testing-quality.md
     guides/
       code-reuse-thinking-guide.md
@@ -699,7 +693,6 @@ tools/
   check_work_item_placeholders.py
   check_workflow_pip.py
   pr_comment.sh
-.gitattributes
 .gitignore
 .pre-commit-config.yaml
 AGENTS.md

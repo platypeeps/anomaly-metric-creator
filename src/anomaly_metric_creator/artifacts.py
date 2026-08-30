@@ -2,7 +2,7 @@
 
 Extracted verbatim from ``legacy.py`` (decomposition step 4, pulled
 forward into step 3 because ``gauges_impl.write_gauges_csv`` depends on
-it; see ``.trellis/tasks/07-02-legacy-monolith-decomposition/design.md``).
+it; see ``docs/work/archive/2026-07/2026-07-02-legacy-monolith-decomposition/design.md``).
 A leaf shared by every generated-artifact writer (per-component CSVs,
 anomalies.csv, the report log/trace pair, gauges.csv, combine outputs,
 schema.json); ``legacy.py`` re-imports each name so the historic

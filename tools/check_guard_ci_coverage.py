@@ -12,11 +12,12 @@ executes that test file.
 
 That produces a failure mode invisible by inspection: a lint whose watched
 files select a lane in which neither its CI step nor its test runs. It
-happened. `tools/check_task_criteria_commands.py` watches
-`.trellis/tasks/**/*.md`; a PR touching only those files is `lightweight_only`,
-which skips every test job, so the lint's own `test_live_task_tree_is_clean`
-never ran for exactly the PR shape the lint exists to police. It was enforced
-in appearance only until the CI step was added.
+happened. `tools/check_task_criteria_commands.py` watches the work-item tree
+(`docs/work/**/*.md` today, `.trellis/tasks/**/*.md` when the defect landed); a
+PR touching only those files is `lightweight_only`, which skips every test job,
+so the lint's own `test_live_task_tree_is_clean` never ran for exactly the PR
+shape the lint exists to police. It was enforced in appearance only until the
+CI step was added.
 
 This guard makes that class mechanically checkable.
 

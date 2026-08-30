@@ -145,7 +145,7 @@ def repo(tmp_path: Path) -> Path:
     (tmp_path / "scripts").mkdir()
     (tmp_path / ".github" / "workflows").mkdir(parents=True)
     (tmp_path / "src" / "anomaly_metric_creator").mkdir(parents=True)
-    (tmp_path / ".trellis" / "tasks" / "demo").mkdir(parents=True)
+    (tmp_path / "docs" / "work" / "demo").mkdir(parents=True)
 
     # The guard shells out to the real classifier, so copy it in rather than
     # reimplementing its lane rules in the fixture.
@@ -155,7 +155,7 @@ def repo(tmp_path: Path) -> Path:
     (tmp_path / "src" / "anomaly_metric_creator" / "core.py").write_text(
         "x = 1\n", encoding="utf-8"
     )
-    (tmp_path / ".trellis" / "tasks" / "demo" / "prd.md").write_text(
+    (tmp_path / "docs" / "work" / "demo" / "prd.md").write_text(
         "# demo\n", encoding="utf-8"
     )
 
@@ -183,7 +183,7 @@ def _write(
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
 
 
-TASKS = r"^\.trellis/tasks/.*\.md$"
+TASKS = r"^docs/work/.*\.md$"
 SOURCE = r"^src/.*\.py$"
 
 
@@ -276,14 +276,14 @@ def test_a_mixed_pattern_reaches_light_through_its_lightweight_subset(
     """One app-required path must not mask the lightweight paths beside it.
 
     The pattern watches both `src/**.py` (app-required) and
-    `.trellis/tasks/**.md` (lightweight). Classifying the matched set as one
+    `docs/work/**.md` (lightweight). Classifying the matched set as one
     unit yields `app_required`, hiding the gap; a PR touching only the task
     file really does select the lightweight lane, where nothing runs this
     guard.
     """
     _write(
         repo,
-        hooks=_hook("mixed", "check_mixed.py", r"^(src/.*\.py|\.trellis/tasks/.*\.md)$"),
+        hooks=_hook("mixed", "check_mixed.py", r"^(src/.*\.py|docs/work/.*\.md)$"),
         workflow=_workflow(
             guard_steps={}, quick_tests=("test_mixed_lint.py",)
         ),

@@ -5,7 +5,7 @@
 Durable implementation and review conventions live in `docs/spec/`.
 `AGENTS.md`, `CLAUDE.md`, GitHub/Copilot instructions, Claude/Codex/Gemini/
 OpenCode files, and other platform entries are adapters or supporting source
-documents. Sources: `AGENTS.md`; `CLAUDE.md`; `.trellis/workflow.md`;
+documents. Sources: `AGENTS.md`; `CLAUDE.md`;
 `.github/instructions/anomaly-metric-creator.instructions.md`;
 `.agents/`; `.codex/`; `.claude/`; `.gemini/`; `.opencode/`.
 
@@ -13,13 +13,13 @@ documents. Sources: `AGENTS.md`; `CLAUDE.md`; `.trellis/workflow.md`;
 server endpoints, output files, topology prose, and application flow diagrams.
 Keep them consistent with the implementation specs but do not turn them into a
 duplicate agent rulebook. Sources: `README.md`;
-`docs/application-flow.md`; `docs/topology.md`; `.trellis/tasks/`;
+`docs/application-flow.md`; `docs/topology.md`; `docs/work/`;
 `docs/spec/amc/backend/`.
 
 `CLAUDE.md` is the Claude Code adapter, sized to be loaded on every session:
 the module-ownership map, the extraction / re-import invariant, the determinism
 contract, the fixed generation-pipeline order, and a routing table into these
-specs. Durable conventions go into Trellis first; `CLAUDE.md` links them rather
+specs. Durable conventions go into `docs/spec/` first; `CLAUDE.md` links them rather
 than restating them, and pre-refactor detail stays recoverable through
 `git log`. Sources: `CLAUDE.md`; `AGENTS.md`;
 `docs/spec/amc/backend/index.md`.
@@ -29,8 +29,8 @@ than restating them, and pre-refactor detail stays recoverable through
 Every convention added to `docs/spec/` must cite supporting repo paths.
 Prefer repo-relative paths; add line, symbol, or section detail when verified in
 the current pass. Sources:
-`.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/prd.md`;
-`.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/design.md`;
+`docs/work/archive/2026-06/2026-06-25-consolidate-agent-docs-trellis/prd.md`;
+`docs/work/archive/2026-06/2026-06-25-consolidate-agent-docs-trellis/design.md`;
 `AGENTS.md`.
 
 A spec's `Sources:` footer must not cite `CLAUDE.md`. `CLAUDE.md` is derived
@@ -46,7 +46,7 @@ sources. None lost its evidence: every removed footer already cited the code,
 test, or `README.md` path that substantiates the rule, confirmed by first
 searching for footers where `CLAUDE.md` was the sole substantive source and
 finding none. Sources: `docs/spec/amc/backend/index.md`;
-`.trellis/tasks/archive/2026-08/08-05-claude-md-context-refactor/implement.md`.
+`docs/work/archive/2026-08/2026-08-05-claude-md-context-refactor/implement.md`.
 
 When cutting prose from one surface on the grounds that another already covers
 it, a grep hit on a module name, flag name, or keyword is **not** coverage.
@@ -56,8 +56,8 @@ test during the `CLAUDE.md` consolidation, and three contracts turned out to
 have zero coverage anywhere in the repo — they needed relocation, not deletion.
 A consolidation pass should reconcile its dispositions against the source file's
 line count so no span is silently unclassified. Sources:
-`.trellis/tasks/archive/2026-08/08-05-claude-md-context-refactor/design.md`;
-`.trellis/tasks/archive/2026-08/08-05-claude-md-context-refactor/implement.md`.
+`docs/work/archive/2026-08/2026-08-05-claude-md-context-refactor/design.md`;
+`docs/work/archive/2026-08/2026-08-05-claude-md-context-refactor/implement.md`.
 
 Retiring historical narrative is sentence-level work, not paragraph-level.
 Passages written in past-tense project voice ("Phase N landed…", "PR #NN
@@ -65,21 +65,19 @@ widened…") routinely carry a live present-tense clause inside them — "the
 reader still honors", "the kwarg survives", "no longer parses", "must not" —
 and a paragraph delete drops a rule. Keep every clause asserting present
 behavior; delete only the framing and superseded tuning history. Sources:
-`.trellis/tasks/archive/2026-08/08-05-claude-md-context-refactor/design.md`;
+`docs/work/archive/2026-08/2026-08-05-claude-md-context-refactor/design.md`;
 `docs/spec/amc/backend/api-cli-server.md`;
 `docs/spec/amc/backend/scenarios-and-data.md`.
 
-Generated/local runtime state such as `.trellis/.runtime/`, session journals,
-and task archives should not be the only source for product conventions. Use
-them as historical context, then verify against code, tests, docs, or active
-specs before codifying a rule. Sources: `.trellis/workflow.md`;
-`.trellis/workspace/`; `.trellis/tasks/`; `src/anomaly_metric_creator/`;
-`tests/`; `README.md`.
+Archived work items under `docs/work/archive/` should not be the only source
+for product conventions. Use them as historical context, then verify against
+code, tests, docs, or active specs before codifying a rule. Sources:
+`docs/work/`; `src/anomaly_metric_creator/`; `tests/`; `README.md`.
 
 ## Docs Sync
 
 Behavior changes must update every surface that describes the behavior:
-docstrings, CLI help strings, README, `docs/*.md`, Trellis specs, and adapter
+docstrings, CLI help strings, README, `docs/*.md`, the specs under `docs/spec/`, and adapter
 docs when those adapters mirror the changed convention. Sources: `CLAUDE.md`;
 `README.md`; `docs/application-flow.md`; `docs/topology.md`;
 `docs/spec/amc/backend/`; `.github/instructions/anomaly-metric-creator.instructions.md`.
@@ -99,23 +97,21 @@ or removing entries. Sources: `CLAUDE.md`; `README.md`;
 
 ## Backlog and Follow-Up Ownership
 
-Trellis task records are the canonical home for planned implementation work,
+Work items under `docs/work/` are the canonical home for planned implementation work,
 backlog slices, and follow-up decisions. User-facing docs can describe current
 capabilities and supported behavior, but they should not carry a parallel list
-of future work once the item has been converted into `.trellis/tasks/`.
-Sources: `.trellis/tasks/archive/2026-08/07-09-multi-instance-dst-splice-boundary/prd.md`;
-`.trellis/tasks/archive/2026-08/06-29-server-watch-semantics/prd.md`;
-`.trellis/tasks/06-29-helm-incident-command-coverage/prd.md`; `README.md`.
+of future work once the item has been converted into `docs/work/`.
+Sources: `docs/work/archive/2026-08/2026-07-09-multi-instance-dst-splice-boundary/prd.md`;
+`docs/work/archive/2026-08/2026-06-29-server-watch-semantics/prd.md`;
+`docs/work/2026-06-29-helm-incident-command-coverage/prd.md`; `README.md`.
 
 When consolidating older planning or handoff notes, map each still-relevant
-item to an active or archived Trellis task, create a new task only for a
+item to an active or archived work item, create a new item only for a
 current-doc item that has no tracker, then remove stale file references and
-future-work phrasing from docs, journals, and task context manifests. Do not
-leave the same work item tracked in both a user-facing document and a Trellis
-task. Sources: `.trellis/tasks/archive/2026-08/07-09-multi-instance-dst-splice-boundary/prd.md`;
-`.trellis/tasks/archive/2026-06/06-25-consolidate-agent-docs-trellis/`;
-`.trellis/tasks/archive/2026-06/06-26-server-compat-debug-polish/`;
-`.trellis/workspace/sdelmas/journal-1.md`.
+future-work phrasing from the docs that carry them. Do not leave the same work
+item tracked in both a user-facing document and a work item. Sources: `docs/work/archive/2026-08/2026-07-09-multi-instance-dst-splice-boundary/prd.md`;
+`docs/work/archive/2026-06/2026-06-25-consolidate-agent-docs-trellis/`;
+`docs/work/archive/2026-06/2026-06-26-server-compat-debug-polish/`.
 
 An acceptance criterion that quotes a command must be runnable exactly as
 written, state its expected output, and make a claim no wider than that command
@@ -132,9 +128,9 @@ literal -- are enforced by `tools/check_task_criteria_commands.py`; the
 wider-claim defect is not mechanically detectable and remains this rule.
 Sources: `tools/check_task_criteria_commands.py`;
 `tests/test_task_criteria_lint.py`;
-`.trellis/tasks/08-06-conftest-helper-consolidation/prd.md`;
-`.trellis/tasks/08-06-otlp-capture-fixture/prd.md`;
-`.trellis/tasks/07-17-audit-test-harness-dedupe/prd.md`.
+`docs/work/2026-08-06-conftest-helper-consolidation/prd.md`;
+`docs/work/2026-08-06-otlp-capture-fixture/prd.md`;
+`docs/work/2026-07-17-audit-test-harness-dedupe/prd.md`.
 
 A pair of criteria written as exclusive `If X … / If not X …` branches always
 leaves one box unchecked, and the pre-archive gate counts unchecked boxes — it
@@ -161,18 +157,18 @@ satisfied and the second is recorded as not-taken rather than deleted.
       (`CommandTraceStore.list` → `list_traces`), so no lint is required.
 ```
 
-Sources: `.trellis/tasks/archive/2026-08/08-06-server-traces-mypy-gate/prd.md`;
+Sources: `docs/work/archive/2026-08/2026-08-06-server-traces-mypy-gate/prd.md`;
 `tests/test_task_criteria_lint.py`;
-`.trellis/tasks/08-06-conftest-helper-consolidation/prd.md`;
-`.trellis/tasks/08-06-otlp-capture-fixture/prd.md`;
-`.trellis/tasks/07-17-audit-test-harness-dedupe/prd.md`.
+`docs/work/2026-08-06-conftest-helper-consolidation/prd.md`;
+`docs/work/2026-08-06-otlp-capture-fixture/prd.md`;
+`docs/work/2026-07-17-audit-test-harness-dedupe/prd.md`.
 
 ## Repository Map Artifact
 
 `docs/repomix-map.md` is the generated Repomix repository map for quick human
 or LLM orientation. Development agents should use it when it is present before
 doing broad repo-shape searches, then verify details against source files,
-tests, docs, and Trellis specs before making changes. Sources:
+tests, docs, and the specs under `docs/spec/` before making changes. Sources:
 `docs/repomix-map.md`; `AGENTS.md`; `docs/spec/amc/backend/index.md`;
 `docs/spec/guides/cross-layer-thinking-guide.md`.
 
@@ -201,32 +197,34 @@ debris cannot mask a stale entry that would fail in CI.
 Sources: `tools/check_repomix_map_freshness.py`; `.pre-commit-config.yaml`;
 `docs/DEVELOPMENT_CYCLE.md`; `CLAUDE.md`.
 
-The map excludes `.trellis/tasks/**`, so `task.py archive` never strands an
-entry and the archive commit needs no map refresh. This is not tidiness: while
-those paths were mapped, the archive commit had to carry a regenerated map to
-pass the guard, and the command pack's completion finalization rejects
-`docs/repomix-map.md` in the post-work delta with `bundle_scope_invalid`. Every
-map-refreshing commit falls at or after the archive move and therefore inside
-that delta, so the archive commit could satisfy the guard or the finalization
-gate but never both. Restoring those paths to the map reintroduces a deadlock
-that blocks *every* completion ship, not just an inconvenience — read the
-comment in `scripts/update_repomix` first. One acknowledged cost: the command
-pack's review preflight validates the `.trellis/` paths this map lists, and its
-covered set shrinks to the non-task `.trellis/` trees.
+The only path `scripts/update_repomix` excludes is the artifact itself
+(Repomix's built-in defaults also drop `uv.lock`), so a commit that archives a
+work item strands entries unless it carries a regenerated map. Archive and
+refresh in the same commit.
+
+That was reversed until 2026-08-30, and the history is worth keeping because
+the exclusion looked like tidiness and was not. The work-item tree was excluded
+because the command pack's completion finalization rejected
+`docs/repomix-map.md` in the post-work delta with `bundle_scope_invalid`, while
+every map-refreshing commit falls at or after the archive move and therefore
+inside that delta: the archive commit could satisfy the freshness guard or the
+finalization gate, never both. That gate left with the pack, the deadlock went
+with it, and the exclusion was removed rather than kept as a habit. Read the
+comment in `scripts/update_repomix` before changing this again.
 Sources: `scripts/update_repomix`; `docs/DEVELOPMENT_CYCLE.md`;
-`sd-ai-command-pack-review-preflight.mjs`.
+`tools/check_repomix_map_freshness.py`.
 
 ## PR and Review Surfaces
 
 The PR template checklist mirrors the required review headings, including the
 changelog/version-impact gate for user-visible or compatibility changes. If a
-heading is renamed, added, or removed in the Trellis review spec, update
+heading is renamed, added, or removed in the review spec, update
 `.github/PULL_REQUEST_TEMPLATE.md` and Copilot instructions in the same diff.
 Sources: `docs/spec/amc/backend/testing-quality.md`;
 `.github/PULL_REQUEST_TEMPLATE.md`;
 `.github/instructions/anomaly-metric-creator.instructions.md`; `CLAUDE.md`.
 
-Copilot instructions should route reviewers to the relevant Trellis spec first,
+Copilot instructions should route reviewers to the relevant spec first,
 then to source files/tests and supporting historical sections as needed. They
 should not redefine project rules independently. Sources:
 `.github/instructions/anomaly-metric-creator.instructions.md`;
@@ -241,23 +239,19 @@ review checklist before draft status is removed. Sources: `CLAUDE.md`;
 Behavior-changing diffs should use explicit scope sections in the PR body:
 `Automation scope:`, `CI/review scope:`, `Tooling/generated scope:`,
 `Docs/user-facing scope:`, or `Runtime/server scope:` as applicable.
-The pack's `sd-ai-command-pack-pr-body-scope.py` enforces these sections with
-repo-specific categories from `.sd-ai-command-pack/pr-body-scope.json` when a
-PR body is supplied through `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY`,
-`SD_AI_COMMAND_PACK_SCOPE_PR_BODY`, or `--body-file`. Sources:
-`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`;
-`docs/DEVELOPMENT_CYCLE.md`.
+Nothing enforces them. The check that did was pack-owned and left with the
+pack on 2026-08-30, so a missing scope section is caught in review, not by a
+gate. Sources: `.github/PULL_REQUEST_TEMPLATE.md`; `docs/DEVELOPMENT_CYCLE.md`.
 
-The PR template should prompt for focused local checks, the local Trellis
-full-check gate, and whether a remote `full-ci` label is needed. Review
-guidance should prefer local evidence and the stable aggregate `test` context
-before asking for repeated remote Copilot or Actions runs.
+The PR template should prompt for focused local checks, the local
+deterministic gate (`pre-commit run --all-files` plus
+`scripts/check-review-preflight.mjs`), and whether a remote `full-ci` label is
+needed. Review guidance should prefer local evidence and the stable aggregate
+`test` context before asking for repeated remote Copilot or Actions runs.
 Sources: `.github/PULL_REQUEST_TEMPLATE.md`; `docs/DEVELOPMENT_CYCLE.md`;
-`~/.agents/bin/sd-ai-command-pack-full-check.sh`; `tools/check_ci_review_contract.py`;
+`tools/check_ci_review_contract.py`;
 `tools/check_copilot_instruction_contract.py`;
-`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`;
-`~/.agents/bin/sd-ai-command-pack-review-preflight.mjs`;
-`scripts/check-review-preflight.mjs`;
+`scripts/check-review-preflight.mjs`; `.pre-commit-config.yaml`;
 `.github/copilot-instructions.md`;
 `.github/instructions/anomaly-metric-creator.instructions.md`.
 
@@ -270,8 +264,8 @@ not only in PR comments. Sources: `docs/REVIEW_PATTERNS.md`;
 Before opening housekeeping or finish-work PRs, fetch and compare against
 `origin/main` so already-merged archive/journal commits do not become redundant
 PRs. A publish flow should have a non-empty, non-duplicate branch diff before
-creating a pull request. Sources: `.trellis/workflow.md`;
-`.trellis/workspace/`; `.trellis/tasks/`; `CLAUDE.md`.
+creating a pull request. Sources: `docs/DEVELOPMENT_CYCLE.md`;
+`docs/work/`; `CLAUDE.md`.
 
 Externally posted comment bodies (`gh pr comment`, `gh issue comment`,
 `gh pr create --body-file`, `gh pr review --body-file`) must pass two body
@@ -289,30 +283,24 @@ through. It is operator tooling, not a CI step. Sources: `tools/pr_comment.sh`;
 
 ## Platform Adapter Policy
 
-Retain existing Codex, Claude, GitHub/Copilot, Gemini, and OpenCode Trellis
-files as platform adapters. They should teach each platform how to load
-Trellis context, not carry separate project conventions. Sources: `.agents/`;
-`.codex/`; `.claude/`; `.github/`; `.gemini/`; `.opencode/`;
-`.trellis/workflow.md`; `docs/spec/amc/backend/index.md`.
+The repository's skills live under `.agents/skills/`. That tree is the source;
+`.claude/`, `.codex/`, `.gemini/`, `.github/`, and `.opencode/` each carry a
+rendered copy of it, produced by `scripts/sync-agent-skills.py`, which
+enumerates the source directory rather than working from a roster. Edit the
+`.agents/` copy and re-run the sync; never hand-edit a rendered copy.
 
-Generated Trellis platform files may be updated by future `trellis update`
-runs. Keep local project conventions in `docs/spec/` or a project-local
-skill rather than patching every generated copy with durable project rules.
-Sources: `.trellis/workflow.md`; `.agents/skills/trellis-meta/`;
-`.claude/skills/trellis-meta/`; `.github/skills/trellis-meta/`;
-`.opencode/skills/trellis-meta/`.
+Nothing compares the six copies mechanically -- `sync-agent-skills.py --check`
+reports drift when it is run, but no hook or CI step runs it -- so a hand-edited
+render is caught in review, not by a gate.
 
-Codex inline mode skips sub-agent JSONL curation and loads task artifacts/specs
-through `trellis-before-dev`; sub-agent-capable platform files still keep their
-context-loading protocols. Sources: `.trellis/config.yaml`;
-`.trellis/workflow.md`; `.agents/skills/trellis-before-dev/SKILL.md`;
-`.codex/agents/trellis-implement.toml`; `.claude/agents/trellis-implement.md`;
-`.gemini/agents/trellis-implement.md`; `.opencode/agents/trellis-implement.md`.
+Skills should teach a platform how to load the specs under `docs/spec/`, not
+carry separate project conventions. Sources: `.agents/skills/`;
+`scripts/sync-agent-skills.py`; `docs/spec/amc/backend/index.md`.
 
 ## Historical Notes
 
-Completed Trellis tasks and workspace journals are useful evidence, but they
-can become stale. Before treating older planning text as active work, verify it
-against current source, tests, README, and open tasks. Sources:
-`.trellis/tasks/`; `.trellis/workspace/`; `src/anomaly_metric_creator/`;
+Archived work items are useful evidence, but they can become stale. Before
+treating older planning text as active work, verify it against current source,
+tests, README, and the open items under `docs/work/`. Sources:
+`docs/work/`; `src/anomaly_metric_creator/`;
 `tests/`; `README.md`.

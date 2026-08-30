@@ -36,14 +36,15 @@ remote review loop.
 - Direct third-party workflow installs must use `python -m pip install` or
   `uv pip install` with exact `==` pins.
 - CI cadence changes should update `scripts/classify-ci-changes.sh`,
-  `.github/workflows/ci.yml`, `docs/DEVELOPMENT_CYCLE.md`, and the Trellis
-  testing-quality spec together.
-- Review-pack adapters should point to Trellis specs and scripts rather than
-  copying project conventions into every platform-specific prompt.
+  `.github/workflows/ci.yml`, `docs/DEVELOPMENT_CYCLE.md`, and
+  `docs/spec/amc/backend/testing-quality.md` together.
+- Copilot review surfaces should point at `docs/spec/` and the repo's scripts
+  rather than copying project conventions into every platform-specific
+  prompt.
 
 ## Documentation Drift
 
-- README and server-mode Trellis task PRDs must move completed work out of
+- README and server-mode work-item PRDs must move completed work out of
   future/planned language in the same PR as the implementation.
 - PR descriptions should name every behavior change and explain whether the
   quick local gate, full local gate, remote full CI, or all of them were run.

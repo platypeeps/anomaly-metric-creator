@@ -1,7 +1,7 @@
 """Shared per-component CSV structural + reading primitives.
 
 Extracted verbatim from ``legacy.py`` (decomposition step 3; see
-``.trellis/tasks/07-02-legacy-monolith-decomposition/design.md``).
+``docs/work/archive/2026-07/2026-07-02-legacy-monolith-decomposition/design.md``).
 These header-scan and row-iteration helpers are shared by the gauge
 writer (``gauges_impl.py``), the combine long-form writer
 (``combine_impl.py``), and the OTEL gauge streamer
