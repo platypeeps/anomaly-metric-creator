@@ -10,10 +10,6 @@ headings:
   Tooling/generated scope:
   Docs/user-facing scope:
   Runtime/server scope:
-The guard matches case-insensitively, tolerates Markdown heading, list, and
-blockquote prefixes, so "### Docs/user-facing scope:" is fine. What it will not
-accept is a heading you invent: "Explicit doc scope" matches nothing.
-
 The five headings above are the whole accepted set. Nothing mechanically checks
 a PR body against them any more: the guard that did lived in the installed
 command pack, which this repository no longer carries, so this list and

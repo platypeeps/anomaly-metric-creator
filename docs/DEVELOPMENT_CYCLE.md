@@ -60,19 +60,12 @@ Nothing checks a body for them. The guard that did was pack-owned and left with
 the pack, so this is author discipline confirmed in review — see the note under
 *Local guards* below.
 
-Matching is more permissive than those five literals, so a body that reads
-naturally still passes. `_body_has_heading` anchors each heading to the start of
-a line, but tolerates Markdown heading, list, and blockquote prefixes, matches
-case-insensitively, and treats the trailing colon as optional — so
-`### Docs/user-facing scope:` and `> Docs scope:` both satisfy the docs rule.
-Each rule also carries documented aliases (`Docs scope:`,
-`Generated/tooling scope:`, `Workflow scope:`, and others); the merged config
-plus script defaults are the authority for the full set, not this list.
-
-What the guard will not accept is an invented heading: `Explicit doc scope`
-matches no rule and leaves the section unsatisfied even though it reads like
-compliance. Without a body, the command reports detected categories and exits
-successfully so it remains useful before a PR exists.
+The paragraphs that stood here described how that guard matched — anchoring,
+case-insensitivity, an optional trailing colon, an alias set — in the present
+tense, next to the sentence saying nothing checks. `_body_has_heading` is not
+in this repository; it was the pack's. A reader can no longer verify any of it,
+so it is gone rather than kept as folklore. Write one of the five headings
+above; a reviewer reads the body.
 
 Before marking a PR ready, requesting a final remote review, or applying the
 `full-ci` label, run the local gate with Prism enabled when practical:
