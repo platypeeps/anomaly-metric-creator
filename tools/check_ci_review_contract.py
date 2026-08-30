@@ -323,7 +323,7 @@ def _check_lightweight_uv_cache_permissions(
     text: str,
     violations: list[str],
 ) -> None:
-    """Require a private setup-uv cache before pack-backed lightweight guards."""
+    """Require a private setup-uv cache before the lightweight `uv run` guards."""
     block = _yaml_mapping_block(text, "lightweight_readiness")
     if block is None:
         return

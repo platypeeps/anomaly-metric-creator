@@ -597,12 +597,15 @@ source. Sources: `.github/workflows/ci.yml`;
 - Base: an ordinary runtime Python diff remains application-required.
 - Bad: a docs-only manual dispatch remains lightweight, or a non-`full-ci`
   label on an armed PR rebuilds the required context from the quick lane, or
-  pack-backed guards inherit a group/other-accessible uv cache.
+  the lightweight `uv run` guards inherit a group/other-accessible uv cache.
 
 ### 6. Tests Required
 
-- `tests/test_ci_change_classifier.py` asserts pack/audit positive cases and
-  runtime/dependency/workflow negative cases.
+- `tests/test_ci_change_classifier.py` asserts the lightweight positive cases
+  — docs, specs, platform skill roots, rendered skill payloads, review
+  surfaces, repo-owned tooling — and the runtime/dependency/workflow negative
+  cases. Pack scripts are not among them: since the thin conversion they live
+  on the machine, so no diff in this tree can contain one.
 - `tests/test_ci_review_contract.py` mutation-tests the labeled auto-merge
   clause, manual-dispatch force-app, every managed-Python lightweight guard
   command, private-cache setup ordering, and both syntax lists against the live

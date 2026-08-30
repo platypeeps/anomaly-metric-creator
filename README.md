@@ -110,8 +110,11 @@ package index, not the public Python package index.
 The generated Repomix repository map lives at
 [`docs/repomix-map.md`](docs/repomix-map.md). It is a metadata-only map of the
 repo structure for quick human or LLM orientation; it does not embed source file
-bodies. Its only exclusion is the artifact itself; refresh it with
-`scripts/update_repomix` in the same commit that moves or adds tracked files.
+bodies. Two tracked paths are absent from it: the artifact itself, excluded by
+the `--ignore` flag in `scripts/update_repomix`, and `uv.lock`, excluded by
+Repomix's built-in default patterns. Everything else tracked is listed. Refresh
+it with `scripts/update_repomix` in the same commit that moves or adds tracked
+files.
 
 Refresh it after code, docs, tests, scripts, or platform-adapter tree changes:
 

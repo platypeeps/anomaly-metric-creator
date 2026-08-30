@@ -14,7 +14,10 @@ fi
 cd "$REPO_ROOT"
 mkdir -p "$(dirname "$ARTIFACT")"
 
-# The map's only exclusion is the artifact itself.
+# The only path this script excludes is the artifact itself. Repomix also drops
+# `uv.lock` through its own built-in default patterns, which are named in no
+# file here -- see the docstring of tools/check_repomix_map_freshness.py, which
+# is why that guard checks map-to-tree and not the reverse.
 #
 # It used to exclude the framework's task directories as well, for a reason that
 # no longer holds and is worth recording rather than deleting. Archiving a task

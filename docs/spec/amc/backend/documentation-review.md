@@ -197,7 +197,8 @@ debris cannot mask a stale entry that would fail in CI.
 Sources: `tools/check_repomix_map_freshness.py`; `.pre-commit-config.yaml`;
 `docs/DEVELOPMENT_CYCLE.md`; `CLAUDE.md`.
 
-The map's only exclusion is the artifact itself, so a commit that archives a
+The only path `scripts/update_repomix` excludes is the artifact itself
+(Repomix's built-in defaults also drop `uv.lock`), so a commit that archives a
 work item strands entries unless it carries a regenerated map. Archive and
 refresh in the same commit.
 
