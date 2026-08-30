@@ -950,7 +950,8 @@ def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
         ("untracked local files", "git ls-files --others --exclude-standard"),
         ("repo-local review preflight script", "scripts/check-review-preflight.mjs"),
         ("platform skill-root classification", ".agents/*"),
-        ("work-item and spec classification", "docs/spec/*"),
+        ("spec classification", "docs/spec/*"),
+        ("work-item classification", "docs/work/*"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 

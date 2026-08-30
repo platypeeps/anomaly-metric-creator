@@ -321,6 +321,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         scripts/check-review-preflight.mjs
         .agents/*
         docs/spec/*
+        docs/work/*
         """,
     )
     _write(
