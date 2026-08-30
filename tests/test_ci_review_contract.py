@@ -50,8 +50,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                   uv run --python 3.14 --no-project python tools/check_amc_module_load.py
                   uv run --python 3.14 --no-project python tools/check_test_resource_cost.py
                   uv run --python 3.14 --no-project python tools/check_role_name_leaks.py
-                  uv run --python 3.14 --no-project python tools/check_agent_hook_exceptions.py
-                  git ls-files '.trellis/tasks/*.md' '.trellis/tasks/**/*.md'
+                  git ls-files 'docs/work/*.md' 'docs/work/**/*.md'
                   if [ "${{#task_criteria_files[@]}}" -gt 0 ]; then
                   uv run --python 3.14 --no-project python tools/check_task_criteria_commands.py "${{task_criteria_files[@]}}"
                   fi
@@ -100,10 +99,9 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
                 run: git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
               - run: uv run --python 3.14 --no-project python tools/check_python_syntax.py
               - run: uv run --python 3.14 --no-project python tools/check_workflow_pip.py
-              - run: uv run --python 3.14 --no-project python tools/check_trellis_placeholders.py
+              - run: uv run --python 3.14 --no-project python tools/check_work_item_placeholders.py
               - run: uv run --python 3.14 --no-project python tools/check_ci_review_contract.py
               - run: uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
-              - run: uv run --python 3.14 --no-project python tools/check_scope_heading_mirrors.py
               - run: |
                   scope_guard="$(python3 .sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py --resolve sd-ai-command-pack-pr-body-scope.py)"
                   if [ -n "$scope_guard" ]; then
@@ -347,7 +345,7 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         """,
     )
     _write(
-        root / ".trellis/spec/amc/backend/testing-quality.md",
+        root / "docs/spec/amc/backend/testing-quality.md",
         """
         check_ci_review_contract.py
         sd-ai-command-pack-pr-body-scope.py
@@ -1102,10 +1100,9 @@ def test_lightweight_guards_require_pinned_python(tmp_path: Path) -> None:
     guards = (
         "tools/check_python_syntax.py",
         "tools/check_workflow_pip.py",
-        "tools/check_trellis_placeholders.py",
+        "tools/check_work_item_placeholders.py",
         "tools/check_ci_review_contract.py",
         "tools/check_copilot_instruction_contract.py",
-        "tools/check_scope_heading_mirrors.py",
     )
     for index, guard in enumerate(guards):
         root = tmp_path / str(index)
@@ -1363,15 +1360,11 @@ def test_lightweight_whitespace_requires_pr_diff_range(tmp_path: Path) -> None:
         ),
         ("python tools/check_role_name_leaks.py", "role-name CI guard"),
         (
-            "python tools/check_agent_hook_exceptions.py",
-            "agent-hook-exception CI guard",
-        ),
-        (
             "python tools/check_task_criteria_commands.py",
             "task-criteria CI guard",
         ),
         (
-            "git ls-files '.trellis/tasks/*.md' '.trellis/tasks/**/*.md'",
+            "git ls-files 'docs/work/*.md' 'docs/work/**/*.md'",
             "task-criteria live-tree roots",
         ),
         (

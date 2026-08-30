@@ -9,7 +9,7 @@ This is a packaged Python project whose canonical implementation lives in
 `anomaly-metric-creator.py` file is a thin compatibility shim, and the
 installed `amc` / `anomaly-metric-creator` console scripts dispatch through
 `anomaly_metric_creator.cli`. The authoritative development conventions live in
-`.trellis/spec/amc/backend/index.md`; `CLAUDE.md` is an orientation/routing adapter
+`docs/spec/amc/backend/index.md`; `CLAUDE.md` is an orientation/routing adapter
 guide, and `README.md` documents the user-facing surface. Read the relevant
 Trellis spec plus the supporting source docs before reviewing a change — do not
 produce overview-only or generic Python feedback. If a change touches behavior
@@ -61,14 +61,11 @@ index-only/file-only rows, invalid encoding, empty values, flag-looking values,
 wildcard namespaces, invalid owner/repo slugs, missing paths, and unintended
 whole-repo scans.
 
-For docs, skills, prompts, CI, and Trellis changes, check lockstep across
-`.trellis/spec`, `.agents/skills`, `.github/prompts`,
+For docs, skills, prompts, and CI changes, check lockstep across
+`docs/spec`, `.agents/skills`, `.github/prompts`,
 `.github/instructions`, `.pre-commit-config.yaml`,
 `scripts/classify-ci-changes.sh`, `tools/check_ci_review_contract.py`,
-`tools/check_copilot_instruction_contract.py`,
-`~/.agents/bin/sd-ai-command-pack-install-audit.py`,
-`~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`,
-`.sd-ai-command-pack/pr-body-scope.json`, and focused tests. When the PR
+`tools/check_copilot_instruction_contract.py`, and focused tests. When the PR
 description is incomplete, leave one top-level scope comment naming the exact
 changed paths or behaviors that must be added instead of separate inline
 comments for each omitted artifact. Match the PR-body scope checker by asking
@@ -76,72 +73,45 @@ for the relevant `Automation scope:`, `CI/review scope:`,
 `Tooling/generated scope:`, `Docs/user-facing scope:`, or
 `Runtime/server scope:` section.
 
-## Generated and copied adapter files
-
-Treat files copied in by Trellis or by `platypeeps/sd-ai-command-pack` as
-generated or adapter content. Do not spend review comments on line-level
-wording, duplicated project conventions, or broad refactors inside those files
-when a PR is only syncing them into the repo. Review the canonical source,
-local wiring, and executable integration instead.
-
-Trellis-copied GitHub adapters include `.github/agents/trellis-*.agent.md`,
-`.github/skills/trellis-*/**`, `.github/copilot/hooks.json`,
-`.github/copilot/hooks/**`, `.github/hooks/trellis.json`, and Trellis command
-or prompt entry points under `.github/prompts/`.
-
-This is a thin SD install: the pack's skills, docs, and scripts live on the
-machine under `~/.agents`, not in this tree, so they cannot appear in a diff
-here. The surfaces the pack still copies into the repository are
-`.github/prompts/sd-*.prompt.md`, `.github/copilot-instructions.md`,
-`.github/PULL_REQUEST_TEMPLATE.md`, `.sd-ai-command-pack/installed-targets.txt`
-and its sibling receipts, `.gito/**`, and `.prism/rules.schema.json`.
-
-Only comment on those copied files when the PR intentionally changes the
-generator/source pack contract, the local adapter wiring is broken, a copied
-script fails its repo tests or shell syntax checks, or the copied content
-contradicts the canonical Trellis specs. In those cases, point the fix at the
-source convention, source pack, or local integration point rather than asking
-for project-specific rules to be hand-edited into each copied adapter.
-
 ## Where to look first by diff shape
 
 - **Anomaly / scenario change** (`SCENARIOS`, `register_cascade`, anomaly
   generators, `--scenarios` / `--exclude-scenarios` / `--anomaly-count`) →
-  `.trellis/spec/amc/backend/scenarios-and-data.md`, with `CLAUDE.md` as orientation
+  `docs/spec/amc/backend/scenarios-and-data.md`, with `CLAUDE.md` as orientation
   source detail. The dispatch rule for
   generator arity (2-arg / step-3 / span-5, with `*args` rules) is the
   single most error-prone surface — review against the exact rule, not by
   intuition.
 - **Topology / coupling / saturation** (`TOPOLOGY`, `Edge`,
   `SaturationParams`, `_compose_topology_*`, `_apply_saturation`) →
-  `.trellis/spec/amc/backend/architecture.md`,
-  `.trellis/spec/amc/backend/scenarios-and-data.md`, and `docs/topology.md`.
+  `docs/spec/amc/backend/architecture.md`,
+  `docs/spec/amc/backend/scenarios-and-data.md`, and `docs/topology.md`.
   Realistic coupling is the only topology mode (the `independent` contrast
   alias was removed at the phase-9 flag day); locked SHA-256 hashes pin the
   realistic baseline.
 - **Multi-instance / dimensions** (`Instance`, `INSTANCES`,
   `--instances-per-component`, `--instance-config`,
-  `_INSTANCE_DIMENSION_COLUMNS`) → `.trellis/spec/amc/backend/architecture.md`,
-  `.trellis/spec/amc/backend/api-cli-server.md`, and `README.md`. The
+  `_INSTANCE_DIMENSION_COLUMNS`) → `docs/spec/amc/backend/architecture.md`,
+  `docs/spec/amc/backend/api-cli-server.md`, and `README.md`. The
   single-anonymous-`Instance()` default keeps byte-identical wide output;
   any named instance or `N > 1` switches per-component CSVs, `gauges.csv`,
   and `combined_metrics_unified.csv` into long-form layouts.
 - **Output files** (`schema.json`, `gauges.csv`,
   `combined_metrics_unified.csv`, `anomalies.csv`, OTEL streaming) →
-  `.trellis/spec/amc/backend/api-cli-server.md` and `README.md`. The
+  `docs/spec/amc/backend/api-cli-server.md` and `README.md`. The
   pre-clean / summary / writer / validator views must stay aligned; they
   all derive from `_EMIT_ARTIFACT_FILES`.
 - **Validator** (the `validate DIR [--warn]` subcommand,
   `_validate_*` helpers, `_RECOMPUTERS`, `DERIVATIONS`) →
-  `.trellis/spec/amc/backend/api-cli-server.md` and
-  `.trellis/spec/amc/backend/testing-quality.md`. The
+  `docs/spec/amc/backend/api-cli-server.md` and
+  `docs/spec/amc/backend/testing-quality.md`. The
   per-component / per-metric dispatch tables must raise on unknown keys;
   silent fall-through is the canonical bug class.
-- **CLI / parse_args** → `.trellis/spec/amc/backend/api-cli-server.md` and
-  `.trellis/spec/amc/backend/testing-quality.md`.
+- **CLI / parse_args** → `docs/spec/amc/backend/api-cli-server.md` and
+  `docs/spec/amc/backend/testing-quality.md`.
   `README.md` *CLI flags* lists the user-facing surface; every new flag
   needs at least one test exercising it in isolation.
-- **Tests** (anything in `tests/`) → `.trellis/spec/amc/backend/testing-quality.md`,
+- **Tests** (anything in `tests/`) → `docs/spec/amc/backend/testing-quality.md`,
   with `CLAUDE.md` as orientation and routing only.
 
 ## Hard invariants — flag any diff that breaks these
@@ -213,8 +183,8 @@ for project-specific rules to be hand-edited into each copied adapter.
 ## Pre-PR checklist headings (canonical in Trellis)
 
 PR descriptions in this repo carry a 15-heading checklist mirrored from
-`.trellis/spec/amc/backend/testing-quality.md` and
-`.trellis/spec/amc/backend/documentation-review.md`. When reviewing, walk the diff against
+`docs/spec/amc/backend/testing-quality.md` and
+`docs/spec/amc/backend/documentation-review.md`. When reviewing, walk the diff against
 each heading and call out any item that the PR description marked
 confirmed but the diff does not support:
 
@@ -223,7 +193,7 @@ confirmed but the diff does not support:
 2. **Validators and schema checks** — non-canonical inputs enumerated;
    every discriminator branch validated; dispatch tables strict.
 3. **Doc / docstring sync** — changed docstrings updated; changed
-   symbol names grepped against `.trellis/spec/amc/backend/`, `README.md`, and `docs/`.
+   symbol names grepped against `docs/spec/amc/backend/`, `README.md`, and `docs/`.
 4. **Single source of truth** — no parallel registries.
 5. **Completeness** — fix is applied to every instance the title
    implies, not just one.

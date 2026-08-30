@@ -76,25 +76,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   prompts/
     continue.prompt.md
     finish-work.prompt.md
-    sd-audit-repo.prompt.md
-    sd-check.prompt.md
-    sd-continue.prompt.md
-    sd-create-pr.prompt.md
-    sd-finish-work.prompt.md
-    sd-fix-ci.prompt.md
-    sd-help.prompt.md
-    sd-housekeeping.prompt.md
-    sd-retro.prompt.md
-    sd-review-learnings.prompt.md
-    sd-review-pr.prompt.md
-    sd-review.prompt.md
-    sd-ship.prompt.md
-    sd-start.prompt.md
-    sd-status.prompt.md
-    sd-test-gaps.prompt.md
-    sd-update-deps.prompt.md
-    sd-update-spec.prompt.md
-    sd-work-backlog.prompt.md
   skills/
     amc-server-compatibility/
       agents/
@@ -119,6 +100,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
 .prism/
   rules.json
+  rules.schema.json
 config/
   routed-review-setup-v1.json
 docs/
@@ -621,8 +603,6 @@ src/
     version.py
 tests/
   conftest.py
-  test_add_session_journal_content.py
-  test_agent_hook_exception_lint.py
   test_amc_module_load_lint.py
   test_approval_duplicate_lint.py
   test_args.py
@@ -669,7 +649,6 @@ tests/
   test_scenario_deviation.py
   test_scenarios.py
   test_schema_file.py
-  test_scope_heading_mirrors_lint.py
   test_serve_main_wiring.py
   test_server_alias_surface.py
   test_server_eval_mode.py
@@ -694,14 +673,13 @@ tests/
   test_topology_saturation.py
   test_trace_bundle.py
   test_trace_payload_antipatterns_lint.py
-  test_trellis_placeholder_lint.py
   test_validate_output.py
   test_version.py
+  test_work_item_placeholder_lint.py
   test_workflow_pip_lint.py
 tools/
   benchmark_combine.py
   benchmark_mcp_window.py
-  check_agent_hook_exceptions.py
   check_amc_module_load.py
   check_approval_duplicate.py
   check_branch_name.py
@@ -715,11 +693,10 @@ tools/
   check_repomix_map_freshness.py
   check_role_name_leaks.py
   check_ruff_lockstep.py
-  check_scope_heading_mirrors.py
   check_task_criteria_commands.py
   check_test_resource_cost.py
   check_trace_payload_antipatterns.py
-  check_trellis_placeholders.py
+  check_work_item_placeholders.py
   check_workflow_pip.py
   pr_comment.sh
 .gitattributes

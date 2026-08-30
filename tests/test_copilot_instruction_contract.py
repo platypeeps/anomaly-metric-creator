@@ -28,21 +28,6 @@ PR_CHECKLIST_HEADINGS = [
     "Changelog / version impact",
 ]
 
-# What the pack actually copies into the tree. Since the thin conversion its
-# skills, docs, and scripts live on the machine under ~/.agents, so a fixture
-# for one of them would be asserting about somebody else's filesystem.
-COPIED_FILES = [
-    ".github/agents/trellis-check.agent.md",
-    ".github/skills/trellis-check/SKILL.md",
-    ".github/copilot/hooks.json",
-    ".github/copilot/hooks/session-start.py",
-    ".github/hooks/trellis.json",
-    ".github/prompts/continue.prompt.md",
-    ".github/prompts/sd-review-pr.prompt.md",
-    ".sd-ai-command-pack/installed-targets.txt",
-    ".gito/config.toml",
-    ".prism/rules.schema.json",
-]
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:
@@ -68,16 +53,14 @@ def _write_minimal_contract(root: Path) -> None:
         """
         # Copilot review instructions for anomaly-metric-creator
 
-        Read `.trellis/spec/amc/backend/index.md`,
-        `.trellis/spec/amc/backend/testing-quality.md`, and
-        `.trellis/spec/amc/backend/documentation-review.md`.
+        Read `docs/spec/amc/backend/index.md`,
+        `docs/spec/amc/backend/testing-quality.md`, and
+        `docs/spec/amc/backend/documentation-review.md`.
 
         ## Local-first review cadence
 
         Keep `tools/check_ci_review_contract.py`,
-        `tools/check_copilot_instruction_contract.py`,
-        `sd-ai-command-pack-pr-body-scope.py`,
-        `.sd-ai-command-pack/pr-body-scope.json`, and
+        `tools/check_copilot_instruction_contract.py`, and
         `scripts/classify-ci-changes.sh` in lockstep. The required
         branch-protection context `CI Result` aggregates the jobs, and the
         canonical CLI surface is the subcommand set plus `--emit`.
@@ -92,23 +75,6 @@ def _write_minimal_contract(root: Path) -> None:
         top-level scope comment for PR-body omissions and ask for the matching
         Automation scope:, CI/review scope:, Tooling/generated scope:,
         Docs/user-facing scope:, or Runtime/server scope: section.
-
-        ## Generated and copied adapter files
-
-        Treat files copied from `platypeeps/sd-ai-command-pack` as generated.
-        Do not spend review comments on line-level wording. Review the
-        canonical source, local wiring, and executable integration instead.
-        Comment only for local wiring breakage, shell syntax checks, or content
-        that contradicts the canonical Trellis specs.
-
-        Trellis copies: `.github/agents/trellis-*.agent.md`,
-        `.github/skills/trellis-*/**`, `.github/copilot/hooks.json`,
-        `.github/copilot/hooks/**`, `.github/hooks/trellis.json`,
-        `.github/prompts/`.
-
-        SD copies: `.github/prompts/sd-*.prompt.md`,
-        `.sd-ai-command-pack/installed-targets.txt`, `.gito/**`, and
-        `.prism/rules.schema.json`.
 
         ## Pre-PR checklist headings (canonical in Trellis)
         """,
@@ -134,7 +100,7 @@ def _write_minimal_contract(root: Path) -> None:
         handle.write("\n")
 
     _write(
-        root / ".trellis/spec/amc/backend/testing-quality.md",
+        root / "docs/spec/amc/backend/testing-quality.md",
         """
         scope and description, validators/schema, docs/docstrings,
         single source of truth, completeness, mode/flag combinations,
@@ -145,7 +111,7 @@ def _write_minimal_contract(root: Path) -> None:
         """,
     )
     _write(
-        root / ".trellis/spec/amc/backend/documentation-review.md",
+        root / "docs/spec/amc/backend/documentation-review.md",
         """
         `.github/instructions/anomaly-metric-creator.instructions.md`
         `tools/check_copilot_instruction_contract.py`
@@ -156,15 +122,9 @@ def _write_minimal_contract(root: Path) -> None:
         """
         python tools/check_ci_review_contract.py
         python tools/check_copilot_instruction_contract.py
-        .sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py
-        --resolve sd-ai-command-pack-pr-body-scope.py
         pytest tests/test_copilot_instruction_contract.py
         """,
     )
-    for relative in COPIED_FILES:
-        path = root / relative
-        if not path.exists():
-            _write(path, "copied fixture\n")
 
 
 def test_real_repo_contract_is_clean() -> None:
@@ -225,33 +185,6 @@ def test_pr_template_heading_mismatch_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "Pre-PR checklist headings do not match" in result.stderr
-
-
-def test_missing_copied_adapter_instruction_path_fails(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    instructions = tmp_path / ".github/instructions/anomaly-metric-creator.instructions.md"
-    instructions.write_text(
-        instructions.read_text(encoding="utf-8").replace(
-            ".github/prompts/sd-*.prompt.md",
-            ".github/prompts/sd-review-pr.prompt.md",
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "SD GitHub prompt copies instruction path" in result.stderr
-
-
-def test_missing_copied_adapter_file_group_fails(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    (tmp_path / ".github/prompts/sd-review-pr.prompt.md").unlink()
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "missing copied path group for SD GitHub prompt copies" in result.stderr
 
 
 def test_missing_review_preflight_wiring_fails(tmp_path: Path) -> None:

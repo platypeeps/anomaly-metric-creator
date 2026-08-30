@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reject Trellis acceptance-criteria commands that cannot do what they claim.
 
-Acceptance criteria in ``.trellis/tasks/**/*.md`` are quoted as runnable shell
+Acceptance criteria in ``docs/work/**/*.md`` are quoted as runnable shell
 commands with a stated expected output, so a command that cannot produce that
 output is a criterion nothing can fail.  Two such defects are mechanical:
 
@@ -19,7 +19,7 @@ GNU-only escapes in a portable-looking pattern
 The third failure mode in this family -- a criterion whose prose claim is wider
 than the command behind it, such as "one derivation remains" checked by a grep
 that only constrains location -- is not mechanically detectable.  It is a prose
-rule; see ``.trellis/spec/amc/backend/documentation-review.md`` § Backlog and
+rule; see ``docs/spec/amc/backend/documentation-review.md`` § Backlog and
 Follow-Up Ownership.
 
 Only ``grep``/``egrep``/``fgrep``/``rg``/``ugrep`` commands inside Markdown

@@ -1,5 +1,5 @@
 # See README.md "Test-hygiene lint" and the "Test hygiene" heading under
-# "Review Checklist" in .trellis/spec/amc/backend/testing-quality.md for the
+# "Review Checklist" in docs/spec/amc/backend/testing-quality.md for the
 # rules these hooks enforce. Install with
 # `pre-commit install` after `pip install -e ".[dev]"`.
 repos:
@@ -153,7 +153,7 @@ repos:
         name: guard CI/review cadence contract
         entry: python tools/check_ci_review_contract.py
         language: python
-        files: ^(\.github/workflows/.*\.ya?ml|scripts/(classify-ci-changes|classify_ci_changes)\.sh|scripts/check-review-preflight\.mjs|tools/check_ci_review_contract\.py|docs/DEVELOPMENT_CYCLE\.md|\.sd-ai-command-pack/pr-body-scope\.json|\.trellis/spec/amc/backend/testing-quality\.md)$
+        files: ^(\.github/workflows/.*\.ya?ml|scripts/(classify-ci-changes|classify_ci_changes)\.sh|scripts/check-review-preflight\.mjs|tools/check_ci_review_contract\.py|docs/DEVELOPMENT_CYCLE\.md|\.sd-ai-command-pack/pr-body-scope\.json|\docs/spec/amc/backend/testing-quality\.md)$
         pass_filenames: false
       # Keep Copilot's mechanical review instructions in sync with the Trellis
       # specs, PR template checklist, copied adapter policy, and local review
@@ -163,40 +163,17 @@ repos:
         name: guard Copilot instruction contract
         entry: python tools/check_copilot_instruction_contract.py
         language: python
-        files: ^(\.github/(instructions/anomaly-metric-creator\.instructions\.md|PULL_REQUEST_TEMPLATE\.md|agents/trellis-.*\.agent\.md|skills/trellis-.+|copilot/hooks.*|hooks/trellis\.json|prompts/.*)|\.gito/.+|\.prism/rules\.schema\.json|scripts/check-review-preflight\.mjs|tools/check_copilot_instruction_contract\.py|\.sd-ai-command-pack/.+|\.trellis/spec/amc/backend/(testing-quality|documentation-review)\.md)$
+        files: ^(\.github/(instructions/anomaly-metric-creator\.instructions\.md|PULL_REQUEST_TEMPLATE\.md|agents/trellis-.*\.agent\.md|skills/trellis-.+|copilot/hooks.*|hooks/trellis\.json|prompts/.*)|\.gito/.+|\.prism/rules\.schema\.json|scripts/check-review-preflight\.mjs|tools/check_copilot_instruction_contract\.py|\.sd-ai-command-pack/.+|\docs/spec/amc/backend/(testing-quality|documentation-review)\.md)$
         pass_filenames: false
-      # Keep every prose description of the PR-body scope guard naming the same
-      # category headings the guard recognizes. The heading set is derived from
-      # the guard itself, so a category added in the config or the script's
-      # defaults fails until all five mirrors say so. The guard now lives on
-      # the machine, so the trigger set covers the mirrors and the config the
-      # repository still owns.
-      - id: scope-heading-mirrors
-        name: guard PR-body scope heading mirrors
-        entry: python tools/check_scope_heading_mirrors.py
+      # Forbid unfinished template placeholders in committed work items.
+      # Finish-work output is repository history, not a scratchpad, so fill
+      # template sections before committing. The workspace-journal half of this
+      # guard went with the journals themselves.
+      - id: work-item-placeholders
+        name: guard work item hygiene
+        entry: python tools/check_work_item_placeholders.py
         language: python
-        files: ^(\.github/(PULL_REQUEST_TEMPLATE\.md|copilot-instructions\.md|instructions/anomaly-metric-creator\.instructions\.md)|docs/DEVELOPMENT_CYCLE\.md|\.trellis/spec/amc/backend/documentation-review\.md|tools/check_scope_heading_mirrors\.py|\.sd-ai-command-pack/pr-body-scope\.json)$
-        pass_filenames: false
-      # Forbid `except BaseException` / bare `except` in generated Python hook
-      # adapters and require a short reason on intentionally empty
-      # `except Exception: pass` handlers. This keeps the PR #140 hook-adapter
-      # review lesson mechanical without enabling a broad repo-wide
-      # blind-except lint.
-      - id: agent-hook-exceptions
-        name: guard agent hook exception handlers
-        entry: python tools/check_agent_hook_exceptions.py
-        language: python
-        files: ^(\.codex/hooks|\.github/copilot/hooks|\.gemini/hooks)/.*\.py$
-        pass_filenames: true
-      # Forbid unfinished Trellis journal/task template placeholders in
-      # committed workspace artifacts, and keep workspace journal commit lists
-      # aligned with their index rows. Session journals and task notes are repo
-      # history, not scratchpads, so fill template sections before committing.
-      - id: trellis-placeholders
-        name: guard Trellis artifact hygiene
-        entry: python tools/check_trellis_placeholders.py
-        language: python
-        files: ^\.trellis/(workspace|tasks)/.*\.(md|json|jsonl|ya?ml|toml)$
+        files: ^docs/work/.*\.md$
         pass_filenames: true
       # Keep quoted acceptance-criteria commands runnable as written. A
       # multi-file `grep -c` prints one `file:count` line per file and can never
@@ -206,7 +183,7 @@ repos:
         name: guard Trellis acceptance-criteria commands
         entry: python tools/check_task_criteria_commands.py
         language: python
-        files: ^\.trellis/tasks/.*\.md$
+        files: ^docs/work/.*\.md$
         pass_filenames: true
       # Keep the generated `docs/repomix-map.md` describing the tracked tree.
       # `always_run` is load-bearing and is the thing most likely to be "fixed"

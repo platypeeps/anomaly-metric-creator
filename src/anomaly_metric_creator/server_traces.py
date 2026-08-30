@@ -671,7 +671,7 @@ class CommandTraceStore:
         ``delete_fts_first`` is unnecessary for ``_replace_sqlite_traces``
         only because that path bulk-clears the FTS table before its loop.
         Both contracts are pinned by tests; see the trace-persistence section
-        of ``.trellis/spec/amc/backend/operations-security-logging.md``.
+        of ``docs/spec/amc/backend/operations-security-logging.md``.
 
         """
         conn.execute(

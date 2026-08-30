@@ -246,7 +246,6 @@ repo-specific categories from `.sd-ai-command-pack/pr-body-scope.json` when a
 PR body is supplied through `SD_AI_COMMAND_PACK_PR_BODY_SCOPE_PR_BODY`,
 `SD_AI_COMMAND_PACK_SCOPE_PR_BODY`, or `--body-file`. Sources:
 `~/.agents/bin/sd-ai-command-pack-pr-body-scope.py`;
-`.sd-ai-command-pack/pr-body-scope.json`; `tools/check_scope_heading_mirrors.py`;
 `docs/DEVELOPMENT_CYCLE.md`.
 
 The PR template should prompt for focused local checks, the local Trellis
@@ -302,14 +301,6 @@ skill rather than patching every generated copy with durable project rules.
 Sources: `.trellis/workflow.md`; `.agents/skills/trellis-meta/`;
 `.claude/skills/trellis-meta/`; `.github/skills/trellis-meta/`;
 `.opencode/skills/trellis-meta/`.
-
-Python hook adapters must not catch `BaseException` or use bare `except`, and
-intentional fail-open `except Exception: pass` handlers must include a short
-comment explaining the suppression. Enforce this mechanically instead of
-copying reviewer prose into each generated adapter. Sources:
-`.codex/hooks/`; `.github/copilot/hooks/`; `.gemini/hooks/`;
-`tools/check_agent_hook_exceptions.py`;
-`tests/test_agent_hook_exception_lint.py`.
 
 Codex inline mode skips sub-agent JSONL curation and loads task artifacts/specs
 through `trellis-before-dev`; sub-agent-capable platform files still keep their

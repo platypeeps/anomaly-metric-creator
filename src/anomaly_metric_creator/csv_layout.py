@@ -13,7 +13,7 @@ each name so the historic ``legacy.<name>`` surface is unchanged.
 ``SystemExit`` rather than returning an error to the caller, because
 this module is a CLI-internal surface rather than a supported
 programmatic API. That is documented semantics, not a defect. See
-``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+``docs/spec/amc/backend/api-cli-server.md`` § Library-API Error
 Posture.
 """
 

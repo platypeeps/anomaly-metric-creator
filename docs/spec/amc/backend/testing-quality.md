@@ -263,13 +263,12 @@ project + numpy, not a `check_*` lint) with no `0`/`1`/`2` contract and no
 acceptance test, and is not wired into pre-commit or CI. Sources:
 `.pre-commit-config.yaml`;
 `tools/check_python_syntax.py`;
-`tools/check_agent_hook_exceptions.py`; `tools/check_trellis_placeholders.py`;
+`tools/check_work_item_placeholders.py`;
 `tools/check_copilot_instruction_contract.py`;
 `tools/check_trace_payload_antipatterns.py`;
 `tools/check_mypy_gate.py`;
 `tests/test_python_syntax_lint.py`;
-`tests/test_agent_hook_exception_lint.py`;
-`tests/test_trellis_placeholder_lint.py`;
+`tests/test_work_item_placeholder_lint.py`;
 `tests/test_copilot_instruction_contract.py`;
 `tests/test_trace_payload_antipatterns_lint.py`;
 `tests/test_mypy_gate_lint.py`.
@@ -327,7 +326,7 @@ Sources: `~/.agents/bin/sd-ai-command-pack-full-check.sh`;
 `tests/test_ci_review_contract.py`;
 `tests/test_copilot_instruction_contract.py`;
 `tests/test_python_syntax_lint.py`;
-`tests/test_workflow_pip_lint.py`; `tests/test_trellis_placeholder_lint.py`;
+`tests/test_workflow_pip_lint.py`;
 `tests/test_trace_payload_antipatterns_lint.py`; `tests/test_server.py`;
 `docs/DEVELOPMENT_CYCLE.md`.
 

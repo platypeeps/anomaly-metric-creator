@@ -162,7 +162,7 @@ def _guard_cwd_otel_activity_log():
 # full xdist run OOM-died while generating these fixtures. The isolated heavy
 # lane now uses two loadfile-distributed workers after hosted capacity evidence
 # cleared its memory/disk thresholds (see
-# ``.trellis/spec/amc/backend/testing-quality.md``). Every other fixture
+# ``docs/spec/amc/backend/testing-quality.md``). Every other fixture
 # (including
 # the 1-day full-resolution runs) stays in the parallel set. Derive new heavy
 # fixtures here; never hand-list test files in the workflow.

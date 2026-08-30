@@ -18,15 +18,14 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 
 REQUIRED_FILES = {
     "copilot": Path(".github/instructions/anomaly-metric-creator.instructions.md"),
     "pr_template": Path(".github/PULL_REQUEST_TEMPLATE.md"),
-    "testing_spec": Path(".trellis/spec/amc/backend/testing-quality.md"),
-    "documentation_spec": Path(".trellis/spec/amc/backend/documentation-review.md"),
+    "testing_spec": Path("docs/spec/amc/backend/testing-quality.md"),
+    "documentation_spec": Path("docs/spec/amc/backend/documentation-review.md"),
     "review_preflight": Path("scripts/check-review-preflight.mjs"),
 }
 
@@ -67,27 +66,15 @@ TESTING_SPEC_HEADING_FRAGMENTS = [
 ]
 
 COPILOT_REQUIRED_NEEDLES = [
-    ("Trellis spec index", ".trellis/spec/amc/backend/index.md"),
-    ("testing spec", ".trellis/spec/amc/backend/testing-quality.md"),
-    ("documentation spec", ".trellis/spec/amc/backend/documentation-review.md"),
+    ("testing spec", "docs/spec/amc/backend/testing-quality.md"),
+    ("documentation spec", "docs/spec/amc/backend/documentation-review.md"),
     ("local-first cadence heading", "## Local-first review cadence"),
     ("review-cycle reduction heading", "## Review-cycle reduction"),
     ("newer commit/test de-duplication", "newer commits or tests"),
     ("grouped sibling comments", "one grouped comment per"),
     ("top-level scope comment", "one top-level scope comment"),
-    ("copied adapter policy heading", "## Generated and copied adapter files"),
-    ("SD command pack source", "platypeeps/sd-ai-command-pack"),
-    ("line-level copied-file review skip", "Do not spend review comments on line-level"),
-    ("canonical source review target", "Review the canonical source"),
-    ("local wiring review target", "local wiring"),
-    ("shell syntax review target", "shell syntax checks"),
-    ("Trellis contradiction exception", "contradicts the canonical Trellis specs"),
     ("CI review contract guard", "tools/check_ci_review_contract.py"),
     ("Copilot instruction contract guard", "tools/check_copilot_instruction_contract.py"),
-    # A bare name, not a path: since the thin conversion the guard lives on the
-    # machine, and the instructions name it the way an operator invokes it.
-    ("PR body scope guard", "sd-ai-command-pack-pr-body-scope.py"),
-    ("PR body scope config", ".sd-ai-command-pack/pr-body-scope.json"),
     ("automation scope section", "Automation scope:"),
     ("CI review scope section", "CI/review scope:"),
     ("tooling generated scope section", "Tooling/generated scope:"),
@@ -120,79 +107,6 @@ EDGE_CASE_NEEDLES = [
     "invalid owner/repo slugs",
     "missing paths",
     "unintended whole-repo scans",
-]
-
-
-@dataclass(frozen=True)
-class CopiedPath:
-    label: str
-    instruction_needle: str
-    path: str
-    glob: bool = False
-    directory: bool = False
-
-
-COPIED_PATHS = [
-    CopiedPath(
-        "Trellis GitHub agents",
-        ".github/agents/trellis-*.agent.md",
-        ".github/agents/trellis-*.agent.md",
-        glob=True,
-    ),
-    CopiedPath(
-        "Trellis GitHub skills",
-        ".github/skills/trellis-*/**",
-        ".github/skills/trellis-*/**",
-        glob=True,
-    ),
-    CopiedPath(
-        "Copilot hooks manifest",
-        ".github/copilot/hooks.json",
-        ".github/copilot/hooks.json",
-    ),
-    CopiedPath(
-        "Copilot hook adapters",
-        ".github/copilot/hooks/**",
-        ".github/copilot/hooks/**",
-        glob=True,
-    ),
-    CopiedPath(
-        "Trellis GitHub hook config",
-        ".github/hooks/trellis.json",
-        ".github/hooks/trellis.json",
-    ),
-    CopiedPath(
-        "GitHub prompt adapters",
-        ".github/prompts/",
-        ".github/prompts",
-        directory=True,
-    ),
-    # Since the thin conversion the pack copies only these surfaces into the
-    # tree. Its skills, docs, and scripts live on the machine under ~/.agents,
-    # so a path assertion here would be asserting about somebody else's
-    # filesystem rather than about this checkout.
-    CopiedPath(
-        "SD GitHub prompt copies",
-        ".github/prompts/sd-*.prompt.md",
-        ".github/prompts/sd-*.prompt.md",
-        glob=True,
-    ),
-    CopiedPath(
-        "SD installed target list",
-        ".sd-ai-command-pack/installed-targets.txt",
-        ".sd-ai-command-pack/installed-targets.txt",
-    ),
-    CopiedPath(
-        "SD Gito review config",
-        ".gito/**",
-        ".gito/**",
-        glob=True,
-    ),
-    CopiedPath(
-        "SD Prism rules schema",
-        ".prism/rules.schema.json",
-        ".prism/rules.schema.json",
-    ),
 ]
 
 
@@ -312,37 +226,6 @@ def _check_copilot_text(root: Path, text: str, violations: list[str]) -> None:
         )
 
 
-def _glob_has_file(root: Path, pattern: str) -> bool:
-    if pattern.endswith("/**"):
-        pattern = f"{pattern}/*"
-    return any(path.is_file() for path in root.glob(pattern))
-
-
-def _check_copied_paths(root: Path, copilot_text: str, violations: list[str]) -> None:
-    copilot_path = root / REQUIRED_FILES["copilot"]
-    for copied in COPIED_PATHS:
-        _require_contains(
-            copilot_text,
-            copied.instruction_needle,
-            path=copilot_path,
-            label=f"{copied.label} instruction path",
-            violations=violations,
-        )
-
-        target = root / copied.path
-        if copied.glob:
-            if not _glob_has_file(root, copied.path):
-                violations.append(
-                    f"{root}: missing copied path group for "
-                    f"{copied.label}: {copied.path}"
-                )
-        elif copied.directory:
-            if not target.is_dir():
-                violations.append(f"{root}: missing copied directory for {copied.label}: {copied.path}")
-        elif not target.is_file():
-            violations.append(f"{root}: missing copied file for {copied.label}: {copied.path}")
-
-
 def _check_review_preflight_wiring(root: Path, text: str, violations: list[str]) -> None:
     path = root / REQUIRED_FILES["review_preflight"]
     # The full-check wiring assertions that used to live beside these were
@@ -351,10 +234,6 @@ def _check_review_preflight_wiring(root: Path, text: str, violations: list[str])
     for label, needle in [
         ("CI review contract guard", "tools/check_ci_review_contract.py"),
         ("Copilot instruction contract guard", "tools/check_copilot_instruction_contract.py"),
-        # A bare name: the preflight asks the layout resolver where the guard
-        # is rather than hard-coding a path it no longer owns.
-        ("PR body scope guard", "sd-ai-command-pack-pr-body-scope.py"),
-        ("layout resolver", ".sd-ai-command-pack/bin/sd-ai-command-pack-review-layout.py"),
         ("Copilot instruction contract tests", "tests/test_copilot_instruction_contract.py"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
@@ -386,7 +265,6 @@ def check(root: Path) -> tuple[int, list[str]]:
     violations: list[str] = []
     _check_copilot_text(root, texts["copilot"], violations)
     _check_checklist_headings(root, texts, violations)
-    _check_copied_paths(root, texts["copilot"], violations)
     _check_review_preflight_wiring(root, texts["review_preflight"], violations)
     _check_documentation_spec(root, texts["documentation_spec"], violations)
 

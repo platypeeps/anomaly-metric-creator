@@ -78,7 +78,7 @@ def write_gauges_csv(
     ``_scan_component_csv_headers`` records a per-component ``exists``
     flag from ``Path.exists()`` and the component list is filtered on it
     before any row is read. That is documented semantics, not a defect. See
-    ``.trellis/spec/amc/backend/api-cli-server.md`` § Library-API Error
+    ``docs/spec/amc/backend/api-cli-server.md`` § Library-API Error
     Posture.
     """
     any_dimensioned, layout = _scan_component_csv_headers(component_csv_paths)

@@ -1,4 +1,4 @@
-"""Acceptance tests for the Trellis acceptance-criteria command guard."""
+"""Acceptance tests for the work-item acceptance-criteria command guard."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "check_task_criteria_commands.py"
-TASKS = REPO_ROOT / ".trellis" / "tasks"
+TASKS = REPO_ROOT / "docs" / "work"
 
 
 def _run(*paths: Path) -> subprocess.CompletedProcess:

@@ -119,7 +119,7 @@ is_lightweight_path() {
     docs/*.md|docs/**/*.md)
       return 0
       ;;
-    .trellis/audit/*|.trellis/spec/*|.trellis/tasks/*|.trellis/workspace/*)
+    .trellis/audit/*|docs/spec/*|.trellis/tasks/*|.trellis/workspace/*)
       return 0
       ;;
   esac

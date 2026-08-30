@@ -32,8 +32,8 @@ checks first, then the local gate or remote full CI when relevant. -->
 ## Pre-PR checklist
 
 <!--
-Mirrors the 15 review headings in .trellis/spec/amc/backend/testing-quality.md and
-.trellis/spec/amc/backend/documentation-review.md, which carry the per-heading
+Mirrors the 15 review headings in docs/spec/amc/backend/testing-quality.md and
+docs/spec/amc/backend/documentation-review.md, which carry the per-heading
 bullets. For each item below: tick the box once you have confirmed it, or replace
 the box line with "N/A — _reason_".
 -->

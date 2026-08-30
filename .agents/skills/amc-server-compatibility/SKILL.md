@@ -19,11 +19,11 @@ create a second Kubernetes state model.
    ```
 
 2. Read the relevant specs for the slice:
-   - `.trellis/spec/amc/backend/api-cli-server.md` for CLI, command API, Kubernetes API, Helm, trace bundles.
-   - `.trellis/spec/amc/backend/operations-security-logging.md` for command traces, persistence, redaction, request logging, auth, CORS, rate limits, debug UI.
-   - `.trellis/spec/amc/backend/architecture.md` for module boundaries.
-   - `.trellis/spec/amc/backend/testing-quality.md` for test and CI expectations.
-   - `.trellis/spec/guides/code-reuse-thinking-guide.md` and `.trellis/spec/guides/cross-layer-thinking-guide.md` when adding parser branches, payload fields, helper maps, resource families, or trace formats.
+   - `docs/spec/amc/backend/api-cli-server.md` for CLI, command API, Kubernetes API, Helm, trace bundles.
+   - `docs/spec/amc/backend/operations-security-logging.md` for command traces, persistence, redaction, request logging, auth, CORS, rate limits, debug UI.
+   - `docs/spec/amc/backend/architecture.md` for module boundaries.
+   - `docs/spec/amc/backend/testing-quality.md` for test and CI expectations.
+   - `docs/spec/guides/code-reuse-thinking-guide.md` and `docs/spec/guides/cross-layer-thinking-guide.md` when adding parser branches, payload fields, helper maps, resource families, or trace formats.
 
 3. Read `references/server-compatibility-map.md` when the task touches server
    command rendering, fake Kubernetes API behavior, Helm compatibility, debug
