@@ -36,9 +36,17 @@ jobs:
       - name: Check out the pull request
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The pull request's head, not the default `refs/pull/N/merge`.
+          # GitHub does not create the merge ref for a pull request with
+          # conflicts, so the default would fail this job at checkout on
+          # exactly the pull requests that are already having a bad day -- an
+          # advisory lane must never be the thing that makes one look worse.
+          # It is also what `route()` wants: it diffs `base...HEAD`, so the
+          # head commit is the subject and the merge commit is a detour.
+          ref: ${{ github.event.pull_request.head.sha }}
           # `route()` measures the branch against its merge base, which a
           # shallow clone does not contain.
           fetch-depth: 0
           persist-credentials: false
       - name: Report the routing plan
-        uses: platypeeps/sd-ai-command-pack/actions/review-route@de64f4b1d21c2de8b95c063bd90436112781d617
+        uses: platypeeps/sd-ai-command-pack/actions/review-route@c9b5f62545c37fe906ad9e42c7e727bfb023398d
