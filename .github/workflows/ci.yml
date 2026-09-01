@@ -351,13 +351,27 @@ jobs:
           # return, so the lane keeps mirroring the pre-commit F841 hook's
           # `files:` regex without a list to maintain. Same idiom as the
           # "Syntax and artifact guards" step above.
+          # Command substitution, not `done < <(git ls-files ...)`: a process
+          # substitution's exit status is invisible to `set -e`, so a git
+          # failure there would yield an empty list and skip the gate while
+          # the step still reported success. Capturing first means git's
+          # failure aborts the step.
+          f841_listing=$(git ls-files 'src/*.py' 'tools/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
+
           f841_files=()
           while IFS= read -r path; do
-            f841_files+=("$path")
-          done < <(git ls-files 'src/*.py' 'tools/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
-          if [ "${#f841_files[@]}" -gt 0 ]; then
-            uv run --no-sync ruff check --select F841 "${f841_files[@]}"
+            [ -n "$path" ] && f841_files+=("$path")
+          done <<< "$f841_listing"
+
+          # src/ and tools/ always hold tracked Python, so an empty set means
+          # the enumeration broke, not that there is nothing to lint. Fail
+          # loudly rather than pass a lane that checked nothing.
+          if [ "${#f841_files[@]}" -eq 0 ]; then
+            echo "F841 enumeration matched no files; the lint surface is misconfigured." >&2
+            exit 1
           fi
+
+          uv run --no-sync ruff check --select F841 "${f841_files[@]}"
 
       # This list is the QUICK lane's entire test surface: test_light/test_heavy
       # partition the whole suite, but they run only when full_ci_requested is
@@ -559,13 +573,27 @@ jobs:
           # return, so the lane keeps mirroring the pre-commit F841 hook's
           # `files:` regex without a list to maintain. Same idiom as the
           # "Syntax and artifact guards" step above.
+          # Command substitution, not `done < <(git ls-files ...)`: a process
+          # substitution's exit status is invisible to `set -e`, so a git
+          # failure there would yield an empty list and skip the gate while
+          # the step still reported success. Capturing first means git's
+          # failure aborts the step.
+          f841_listing=$(git ls-files 'src/*.py' 'tools/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
+
           f841_files=()
           while IFS= read -r path; do
-            f841_files+=("$path")
-          done < <(git ls-files 'src/*.py' 'tools/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
-          if [ "${#f841_files[@]}" -gt 0 ]; then
-            uv run --no-sync ruff check --select F841 "${f841_files[@]}"
+            [ -n "$path" ] && f841_files+=("$path")
+          done <<< "$f841_listing"
+
+          # src/ and tools/ always hold tracked Python, so an empty set means
+          # the enumeration broke, not that there is nothing to lint. Fail
+          # loudly rather than pass a lane that checked nothing.
+          if [ "${#f841_files[@]}" -eq 0 ]; then
+            echo "F841 enumeration matched no files; the lint surface is misconfigured." >&2
+            exit 1
           fi
+
+          uv run --no-sync ruff check --select F841 "${f841_files[@]}"
 
       # Type-check in two steps (07-06-coverage-threshold-and-mypy-gating).
       # The report-only run surfaces the full mypy baseline on every
