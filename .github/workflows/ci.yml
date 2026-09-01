@@ -337,7 +337,27 @@ jobs:
       # F401 stays tests-only by design: the facade modules (combine.py, etc.)
       # re-export names that read as "unused imports", so F401 on src/ is wrong.
       - name: Lint runtime/tools (ruff F841)
-        run: uv run --no-sync ruff check --select F841 src tools .codex/hooks .github/copilot/hooks .gemini/hooks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Enumerate the F841 surface instead of handing ruff a literal path
+          # roster. Passing directories made ruff stat each one and warn
+          # ("Failed to lint .codex/hooks: No such file or directory") for the
+          # three hook-adapter trees removed in 14e0101/1f19863, while still
+          # exiting 0 -- a roster that had drifted out of the tree without
+          # failing anything. A `git ls-files` glob matches nothing when a
+          # path is absent and picks the tree back up if hook adapters ever
+          # return, so the lane keeps mirroring the pre-commit F841 hook's
+          # `files:` regex without a list to maintain. Same idiom as the
+          # "Syntax and artifact guards" step above.
+          f841_files=()
+          while IFS= read -r path; do
+            f841_files+=("$path")
+          done < <(git ls-files 'src/*.py' 'tools/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
+          if [ "${#f841_files[@]}" -gt 0 ]; then
+            uv run --no-sync ruff check --select F841 "${f841_files[@]}"
+          fi
 
       # This list is the QUICK lane's entire test surface: test_light/test_heavy
       # partition the whole suite, but they run only when full_ci_requested is
@@ -525,7 +545,27 @@ jobs:
       # and hook-adapter code — the same scope the quick lane runs. F401 stays
       # tests-only by design (the src/ facade re-exports would trip it).
       - name: Lint runtime/tools (ruff F841)
-        run: uv run --no-sync ruff check --select F841 src tools .codex/hooks .github/copilot/hooks .gemini/hooks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Enumerate the F841 surface instead of handing ruff a literal path
+          # roster. Passing directories made ruff stat each one and warn
+          # ("Failed to lint .codex/hooks: No such file or directory") for the
+          # three hook-adapter trees removed in 14e0101/1f19863, while still
+          # exiting 0 -- a roster that had drifted out of the tree without
+          # failing anything. A `git ls-files` glob matches nothing when a
+          # path is absent and picks the tree back up if hook adapters ever
+          # return, so the lane keeps mirroring the pre-commit F841 hook's
+          # `files:` regex without a list to maintain. Same idiom as the
+          # "Syntax and artifact guards" step above.
+          f841_files=()
+          while IFS= read -r path; do
+            f841_files+=("$path")
+          done < <(git ls-files 'src/*.py' 'tools/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
+          if [ "${#f841_files[@]}" -gt 0 ]; then
+            uv run --no-sync ruff check --select F841 "${f841_files[@]}"
+          fi
 
       # Type-check in two steps (07-06-coverage-threshold-and-mypy-gating).
       # The report-only run surfaces the full mypy baseline on every
