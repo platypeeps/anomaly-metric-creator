@@ -1,6 +1,7 @@
 ---
 title: Collapse the inline OTLP capture servers onto one conftest fixture
 status: planning
+parked: 2026-09-01 bulk-park (D2)
 created: 2026-08-06
 ---
 # Collapse the inline OTLP capture servers onto one conftest fixture

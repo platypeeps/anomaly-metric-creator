@@ -1,6 +1,7 @@
 ---
 title: Extract the persisted-overlay loader and close its remaining read-back gaps
 status: planning
+parked: 2026-09-01 bulk-park (D2)
 created: 2026-08-26
 ---
 # Extract the persisted-overlay loader and close its remaining read-back gaps

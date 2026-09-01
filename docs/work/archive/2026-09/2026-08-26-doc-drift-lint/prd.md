@@ -1,6 +1,7 @@
 ---
 title: Lint the doc-vs-code drift the prose rule is not preventing
 status: planning
+parked: 2026-09-01 bulk-park (D2)
 created: 2026-08-26
 ---
 # Lint the doc-vs-code drift the prose rule is not preventing

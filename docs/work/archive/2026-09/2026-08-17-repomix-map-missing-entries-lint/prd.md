@@ -1,6 +1,7 @@
 ---
 title: Guard the repository to repomix-map direction (tracked files absent from the map)
 status: planning
+parked: 2026-09-01 bulk-park (D2)
 created: 2026-08-17
 ---
 # Guard the repository → repomix-map direction (tracked files absent from the map)

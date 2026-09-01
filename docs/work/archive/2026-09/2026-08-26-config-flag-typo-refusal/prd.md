@@ -1,6 +1,7 @@
 ---
 title: Refuse a mistyped --config instead of silently ignoring the file
 status: planning
+parked: 2026-09-01 bulk-park (D2)
 created: 2026-08-26
 ---
 # Refuse a mistyped --config instead of silently ignoring the file

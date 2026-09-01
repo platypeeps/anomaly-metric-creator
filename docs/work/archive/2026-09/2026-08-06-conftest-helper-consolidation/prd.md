@@ -1,6 +1,7 @@
 ---
 title: Move topology CSV helpers and lint run_tool boilerplate into conftest
 status: planning
+parked: 2026-09-01 bulk-park (D2)
 created: 2026-08-06
 ---
 # Move topology CSV helpers and lint run_tool boilerplate into conftest

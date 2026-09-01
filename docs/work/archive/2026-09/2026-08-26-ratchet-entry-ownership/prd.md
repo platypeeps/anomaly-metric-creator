@@ -1,6 +1,7 @@
 ---
 title: Give every ratchet entry an owner or an exemption
 status: planning
+parked: 2026-09-01 bulk-park (D2)
 created: 2026-08-26
 ---
 # Give every ratchet entry an owner or an exemption
