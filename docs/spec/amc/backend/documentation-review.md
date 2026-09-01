@@ -103,7 +103,7 @@ capabilities and supported behavior, but they should not carry a parallel list
 of future work once the item has been converted into `docs/work/`.
 Sources: `docs/work/archive/2026-08/2026-07-09-multi-instance-dst-splice-boundary/prd.md`;
 `docs/work/archive/2026-08/2026-06-29-server-watch-semantics/prd.md`;
-`docs/work/2026-06-29-helm-incident-command-coverage/prd.md`; `README.md`.
+`docs/work/archive/2026-09/2026-06-29-helm-incident-command-coverage/prd.md`; `README.md`.
 
 When consolidating older planning or handoff notes, map each still-relevant
 item to an active or archived work item, create a new item only for a
@@ -128,9 +128,9 @@ literal -- are enforced by `tools/check_task_criteria_commands.py`; the
 wider-claim defect is not mechanically detectable and remains this rule.
 Sources: `tools/check_task_criteria_commands.py`;
 `tests/test_task_criteria_lint.py`;
-`docs/work/2026-08-06-conftest-helper-consolidation/prd.md`;
-`docs/work/2026-08-06-otlp-capture-fixture/prd.md`;
-`docs/work/2026-07-17-audit-test-harness-dedupe/prd.md`.
+`docs/work/archive/2026-09/2026-08-06-conftest-helper-consolidation/prd.md`;
+`docs/work/archive/2026-09/2026-08-06-otlp-capture-fixture/prd.md`;
+`docs/work/archive/2026-09/2026-07-17-audit-test-harness-dedupe/prd.md`.
 
 A pair of criteria written as exclusive `If X … / If not X …` branches always
 leaves one box unchecked, and the pre-archive gate counts unchecked boxes — it
@@ -159,9 +159,9 @@ satisfied and the second is recorded as not-taken rather than deleted.
 
 Sources: `docs/work/archive/2026-08/2026-08-06-server-traces-mypy-gate/prd.md`;
 `tests/test_task_criteria_lint.py`;
-`docs/work/2026-08-06-conftest-helper-consolidation/prd.md`;
-`docs/work/2026-08-06-otlp-capture-fixture/prd.md`;
-`docs/work/2026-07-17-audit-test-harness-dedupe/prd.md`.
+`docs/work/archive/2026-09/2026-08-06-conftest-helper-consolidation/prd.md`;
+`docs/work/archive/2026-09/2026-08-06-otlp-capture-fixture/prd.md`;
+`docs/work/archive/2026-09/2026-07-17-audit-test-harness-dedupe/prd.md`.
 
 ## Repository Map Artifact
 
