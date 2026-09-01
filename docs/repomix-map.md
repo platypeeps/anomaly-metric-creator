@@ -84,6 +84,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     ci.yml
     codeql.yml
     dependabot-auto-merge.yml
+    sd-review-route.yml
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
@@ -119,72 +120,6 @@ docs/
       cross-layer-thinking-guide.md
       index.md
   work/
-    2026-06-29-helm-incident-command-coverage/
-      design.md
-      implement.md
-      prd.md
-    2026-06-29-kubectl-events-compatibility/
-      design.md
-      implement.md
-      prd.md
-    2026-06-29-kubectl-exec-outputs/
-      design.md
-      implement.md
-      prd.md
-    2026-06-29-kubectl-logs-refinements/
-      design.md
-      implement.md
-      prd.md
-    2026-06-29-kubectl-port-forward-lifecycle/
-      design.md
-      implement.md
-      prd.md
-    2026-07-02-otel-exporter-target-policy/
-      design.md
-      implement.md
-      prd.md
-    2026-07-02-structured-logging-in-generator/
-      design.md
-      implement.md
-      prd.md
-    2026-07-06-eval-mode-symptom-log-artifact/
-      design.md
-      implement.md
-      prd.md
-    2026-07-06-registry-callback-wiring-hardening/
-      design.md
-      implement.md
-      prd.md
-    2026-07-06-server-ops-decomposition/
-      design.md
-      implement.md
-      prd.md
-    2026-07-17-audit-debris-cleanup/
-      design.md
-      implement.md
-      prd.md
-    2026-07-17-audit-test-harness-dedupe/
-      design.md
-      implement.md
-      prd.md
-    2026-07-17-audit-typed-boundaries/
-      design.md
-      implement.md
-      prd.md
-    2026-08-06-conftest-helper-consolidation/
-      prd.md
-    2026-08-06-otlp-capture-fixture/
-      prd.md
-    2026-08-17-repomix-map-missing-entries-lint/
-      prd.md
-    2026-08-26-config-flag-typo-refusal/
-      prd.md
-    2026-08-26-doc-drift-lint/
-      prd.md
-    2026-08-26-persisted-overlay-loader-extraction/
-      prd.md
-    2026-08-26-ratchet-entry-ownership/
-      prd.md
     archive/
       2026-06/
         2026-06-25-consolidate-agent-docs-trellis/
@@ -515,6 +450,73 @@ docs/
         2026-08-28-refresh-sd-ai-command-pack-to-0-71-62/
           prd.md
         2026-08-28-refresh-sd-ai-command-pack-to-0-71-63/
+          prd.md
+      2026-09/
+        2026-06-29-helm-incident-command-coverage/
+          design.md
+          implement.md
+          prd.md
+        2026-06-29-kubectl-events-compatibility/
+          design.md
+          implement.md
+          prd.md
+        2026-06-29-kubectl-exec-outputs/
+          design.md
+          implement.md
+          prd.md
+        2026-06-29-kubectl-logs-refinements/
+          design.md
+          implement.md
+          prd.md
+        2026-06-29-kubectl-port-forward-lifecycle/
+          design.md
+          implement.md
+          prd.md
+        2026-07-02-otel-exporter-target-policy/
+          design.md
+          implement.md
+          prd.md
+        2026-07-02-structured-logging-in-generator/
+          design.md
+          implement.md
+          prd.md
+        2026-07-06-eval-mode-symptom-log-artifact/
+          design.md
+          implement.md
+          prd.md
+        2026-07-06-registry-callback-wiring-hardening/
+          design.md
+          implement.md
+          prd.md
+        2026-07-06-server-ops-decomposition/
+          design.md
+          implement.md
+          prd.md
+        2026-07-17-audit-debris-cleanup/
+          design.md
+          implement.md
+          prd.md
+        2026-07-17-audit-test-harness-dedupe/
+          design.md
+          implement.md
+          prd.md
+        2026-07-17-audit-typed-boundaries/
+          design.md
+          implement.md
+          prd.md
+        2026-08-06-conftest-helper-consolidation/
+          prd.md
+        2026-08-06-otlp-capture-fixture/
+          prd.md
+        2026-08-17-repomix-map-missing-entries-lint/
+          prd.md
+        2026-08-26-config-flag-typo-refusal/
+          prd.md
+        2026-08-26-doc-drift-lint/
+          prd.md
+        2026-08-26-persisted-overlay-loader-extraction/
+          prd.md
+        2026-08-26-ratchet-entry-ownership/
           prd.md
   application-flow.md
   DEVELOPMENT_CYCLE.md
