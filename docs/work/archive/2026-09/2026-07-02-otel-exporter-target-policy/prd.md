@@ -1,6 +1,7 @@
 ---
 title: Decide and enforce an OTEL exporter target policy
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-07-02
 ---
 # Decide and enforce an OTEL exporter target policy

@@ -1,6 +1,7 @@
 ---
 title: Dedupe OTLP, topology, and SQLite test/store harnesses
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-07-17
 ---
 # Dedupe OTLP, topology, and SQLite test/store harnesses

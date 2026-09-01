@@ -1,6 +1,7 @@
 ---
 title: Expand Helm incident command coverage
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-06-29
 ---
 # Expand Helm incident command coverage

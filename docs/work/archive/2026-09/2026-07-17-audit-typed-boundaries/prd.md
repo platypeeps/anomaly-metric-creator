@@ -1,6 +1,7 @@
 ---
 title: Type the spec/config/server boundaries
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-07-17
 ---
 # Type the spec/config/server boundaries

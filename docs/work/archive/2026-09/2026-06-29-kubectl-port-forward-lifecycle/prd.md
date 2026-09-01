@@ -1,6 +1,7 @@
 ---
 title: Model kubectl port-forward lifecycle
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-06-29
 ---
 # Model kubectl port-forward lifecycle

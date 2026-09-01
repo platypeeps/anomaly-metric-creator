@@ -1,6 +1,7 @@
 ---
 title: Refine kubectl logs incident output
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-06-29
 ---
 # Refine kubectl logs incident output

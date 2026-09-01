@@ -1,6 +1,7 @@
 ---
 title: Design a symptom-level log artifact servable in eval mode
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-07-06
 ---
 # Design a symptom-level log artifact servable in eval mode

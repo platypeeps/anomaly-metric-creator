@@ -1,6 +1,7 @@
 ---
 title: Replace generator stderr prints with structured logging
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-07-02
 ---
 # Replace generator stderr prints with structured logging

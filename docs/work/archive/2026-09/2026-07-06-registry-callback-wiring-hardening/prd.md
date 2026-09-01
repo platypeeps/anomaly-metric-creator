@@ -1,6 +1,7 @@
 ---
 title: Harden or document the schema/validate registry-callback singleton
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-07-06
 ---
 # Harden or document the schema/validate registry-callback singleton

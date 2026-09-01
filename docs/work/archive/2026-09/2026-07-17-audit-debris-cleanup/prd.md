@@ -1,6 +1,7 @@
 ---
 title: Remove audit-found dead code and unchecked lockstep pairs
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-07-17
 ---
 # Remove audit-found dead code and unchecked lockstep pairs

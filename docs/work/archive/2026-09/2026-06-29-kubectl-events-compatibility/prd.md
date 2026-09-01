@@ -1,6 +1,7 @@
 ---
 title: Improve kubectl events compatibility
 status: planning
+parked: 2026-09-01 age-sweep
 created: 2026-06-29
 ---
 # Improve kubectl events compatibility
