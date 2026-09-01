@@ -50,31 +50,48 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Command substitution throughout this file, never `done < <(git ...)`: a
+          # process substitution's exit status is invisible to `set -e`, so a git
+          # failure would leave an empty list, skip the guard, and still report the
+          # step successful. Capturing first makes git's failure abort the step.
+          amc_test_listing=$(git ls-files 'tests/*.py')
           amc_test_files=()
           while IFS= read -r path; do
-            amc_test_files+=("$path")
-          done < <(git ls-files 'tests/*.py')
-          if [ "${#amc_test_files[@]}" -gt 0 ]; then
-            uv run --python 3.14 --no-project python tools/check_amc_module_load.py "${amc_test_files[@]}"
-            uv run --python 3.14 --no-project python tools/check_test_resource_cost.py "${amc_test_files[@]}"
+            [ -n "$path" ] && amc_test_files+=("$path")
+          done <<< "$amc_test_listing"
+          # tests/ is this repository's own suite, so an empty match means the
+          # enumeration broke rather than that there is nothing to check.
+          if [ "${#amc_test_files[@]}" -eq 0 ]; then
+            echo "No tests/*.py matched; the guard enumeration is misconfigured." >&2
+            exit 1
           fi
+          uv run --python 3.14 --no-project python tools/check_amc_module_load.py "${amc_test_files[@]}"
+          uv run --python 3.14 --no-project python tools/check_test_resource_cost.py "${amc_test_files[@]}"
 
+          role_name_listing=$(git ls-files src scripts .agents)
           role_name_files=()
           while IFS= read -r path; do
-            role_name_files+=("$path")
-          done < <(git ls-files src scripts .agents)
-          if [ "${#role_name_files[@]}" -gt 0 ]; then
-            uv run --python 3.14 --no-project python tools/check_role_name_leaks.py "${role_name_files[@]}"
+            [ -n "$path" ] && role_name_files+=("$path")
+          done <<< "$role_name_listing"
+          # src/ is the package itself; an empty match is a broken enumeration.
+          if [ "${#role_name_files[@]}" -eq 0 ]; then
+            echo "No src/scripts/.agents files matched; the guard enumeration is misconfigured." >&2
+            exit 1
           fi
+          uv run --python 3.14 --no-project python tools/check_role_name_leaks.py "${role_name_files[@]}"
 
           # Task-text-only PRs select the lightweight lane, which skips every
           # test job — so `tests/test_task_criteria_lint.py` never runs for the
           # exact PR shape the criteria guard exists to protect, and pre-commit
           # does not run in CI at all. This step is the guard's only CI lane.
+          task_criteria_listing=$(git ls-files 'docs/work/*.md' 'docs/work/**/*.md')
           task_criteria_files=()
           while IFS= read -r path; do
-            task_criteria_files+=("$path")
-          done < <(git ls-files 'docs/work/*.md' 'docs/work/**/*.md')
+            [ -n "$path" ] && task_criteria_files+=("$path")
+          done <<< "$task_criteria_listing"
+          # Unlike the guards above, no match is a legitimate state: a checkout with
+          # every work item archived away has nothing to criteria-check. Skip, do not
+          # fail.
           if [ "${#task_criteria_files[@]}" -gt 0 ]; then
             uv run --python 3.14 --no-project python tools/check_task_criteria_commands.py "${task_criteria_files[@]}"
           fi
@@ -251,9 +268,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Command substitution so a git failure aborts instead of silently
+          # parsing nothing. No match is legitimate here (a checkout may carry no
+          # shell scripts), so the loop simply does not run.
+          script_listing=$(git ls-files 'scripts/*.sh' scripts/update_repomix)
           while IFS= read -r script; do
+            [ -n "$script" ] || continue
             bash -n "$script"
-          done < <(git ls-files 'scripts/*.sh' scripts/update_repomix)
+          done <<< "$script_listing"
 
       - name: Smoke CI classifier
         run: |
@@ -270,26 +292,44 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Command substitution, not `done < <(git ...)`: git's failure must abort
+          # the step rather than vanish into a process substitution.
+          python_listing=$(git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
           python_files=()
           while IFS= read -r path; do
-            python_files+=("$path")
-          done < <(git ls-files 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py')
-          if [ "${#python_files[@]}" -gt 0 ]; then
-            uv run --python 3.14 --no-project python tools/check_python_syntax.py "${python_files[@]}"
+            [ -n "$path" ] && python_files+=("$path")
+          done <<< "$python_listing"
+          # tools/ and tests/ always hold tracked Python; empty means broken.
+          if [ "${#python_files[@]}" -eq 0 ]; then
+            echo "No Python files matched; the guard enumeration is misconfigured." >&2
+            exit 1
           fi
+          uv run --python 3.14 --no-project python tools/check_python_syntax.py "${python_files[@]}"
 
+          workflow_listing=$(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
           workflow_files=()
           while IFS= read -r path; do
-            workflow_files+=("$path")
-          done < <(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
-          if [ "${#workflow_files[@]}" -gt 0 ]; then
-            uv run --python 3.14 --no-project python tools/check_workflow_pip.py "${workflow_files[@]}"
+            [ -n "$path" ] && workflow_files+=("$path")
+          done <<< "$workflow_listing"
+          # This step runs from a workflow file, so a checkout with none is not a
+          # state that can legitimately reach here.
+          if [ "${#workflow_files[@]}" -eq 0 ]; then
+            echo "No workflow files matched; the guard enumeration is misconfigured." >&2
+            exit 1
           fi
+          uv run --python 3.14 --no-project python tools/check_workflow_pip.py "${workflow_files[@]}"
 
+          # The `|| true` this replaces was load-bearing for grep (no match exits 1)
+          # but also swallowed a git failure, on top of the process substitution
+          # already hiding it -- masked twice over. Filtering in the shell drops the
+          # pipeline entirely, so no match needs no suppression and git's failure
+          # still aborts the step.
+          work_item_listing=$(git ls-files docs/work)
           work_item_files=()
           while IFS= read -r path; do
-            work_item_files+=("$path")
-          done < <(git ls-files docs/work | grep -E '\.md$' || true)
+            case "$path" in *.md) work_item_files+=("$path") ;; esac
+          done <<< "$work_item_listing"
+          # No match stays a skip: a checkout with no work items is legitimate.
           if [ "${#work_item_files[@]}" -gt 0 ]; then
             uv run --python 3.14 --no-project python tools/check_work_item_placeholders.py "${work_item_files[@]}"
           fi
