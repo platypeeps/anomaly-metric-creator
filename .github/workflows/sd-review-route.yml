@@ -64,4 +64,4 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Report the routing plan
-        uses: platypeeps/sd-ai-command-pack/actions/review-route@50b2c0e7da2411659bf071c2749b351d5c050a0d
+        uses: platypeeps/sd-ai-command-pack/actions/review-route@c85fcf0c50640dcc7709472af4d8e081b4a3fa00
