@@ -55,6 +55,22 @@ updates:
       # them so Dependabot never opens two individually unmergeable PRs.
       codeql:
         patterns: ["github/codeql-action/*"]
+    ignore:
+      # The review-route pin is set by hand, not by Dependabot. The action runs
+      # `bin/sd-review` out of the pinned checkout, so a bump is a behaviour
+      # change across the whole pack, not a version number.
+      #
+      # rwbp-coordinator is the proof. It had no such entry, so Dependabot
+      # bumped its pin from cada9b61 to 1ff2b049 unattended; that range
+      # introduced a gate refusing any commit without an `Authored-with:`
+      # trailer, `route` went red on the bump's own pull request, and it merged
+      # anyway because `route` is advisory and `CI Result` was green. Every pull
+      # request there was red for the next three days.
+      #
+      # The refusal itself is fixed upstream (platypeeps/sd-ai-command-pack#799,
+      # carried by 505431b8). This entry is for the reason that outlives it: the
+      # next behaviour change would arrive the same way.
+      - dependency-name: "platypeeps/sd-ai-command-pack/actions/review-route"
 
   # No npm ecosystem entry: OpenCode regenerates .opencode/package.json
   # (pinned to the locally installed opencode version) and its lockfile on
