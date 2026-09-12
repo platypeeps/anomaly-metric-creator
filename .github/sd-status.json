@@ -1,0 +1,13 @@
+{
+  "accepted_gaps": [
+    {
+      "id": "unprotected",
+      "state": {
+        "branch_protection": false
+      },
+      "because": "Sole operator on this repository (Sven, 2026-09-11: 'do not protect main. i am the only operator on these repos, and the goal of the framework i use is to ensure proper discipline'). Protection was deleted on 2026-09-12 with that instruction restated, and restated again for this repository after the trade-off below was measured and put to the operator. What the branch had: one required status check, `CI Result`; `strict` off; `enforce_admins` on; a pull request required with 0 approving reviews. Two of those legs gated nobody. A review requirement on the one account that merges means self-approval, which GitHub forbids, so raising the count would lock the repository rather than gate it; and `enforce_admins` applied to that same single account. What is genuinely lost is the third leg: `CI Result` did block a red merge, and nothing server-side replaces it. CI still runs on every pull request and still reports, so the result is visible to a human before the merge button -- it no longer refuses the merge. That is the whole of the cost, recorded here rather than argued away. The gate itself was sound and is not the reason: `ci_result` in ci.yml carries `if: ${{ !cancelled() }}`, which runs the job when its `needs` are skipped or failed, so `CI Result` reported on every run and could not hang pending. Noted because it is the kind of reason that looks like evidence: an earlier reading of `sd-status` reported this repository's gate as one that 'stays pending forever', on no stronger ground than the job carrying a job-level `if:` at all. That reading was wrong and is not a reason for anything here; the tool's own defect is tracked as item #504.",
+      "since": "2026-09-12",
+      "until": "a second account with push or merge rights on this repository exists, or a red merge reaches main because nothing refused it"
+    }
+  ]
+}
