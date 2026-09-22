@@ -23,6 +23,7 @@ from .cli_subcommands import (
     _main_trace_bundle_subcommand as _main_trace_bundle_subcommand,
     _main_validate_subcommand as _main_validate_subcommand,
 )
+from .cli_argv_safety import ValueSafeArgumentParser
 from .version import package_version
 
 
@@ -299,7 +300,7 @@ def parse_args(argv=None, *, runtime_key: str = _DEFAULT_RUNTIME_KEY):
         raw_argv = ["--help"]
     argv = raw_argv
 
-    p = argparse.ArgumentParser(
+    p = ValueSafeArgumentParser(
         description="Generate synthetic IoT metric logs with anomalies.",
         # Abbreviated flags (--emit-sel, --otel-en, ...) would bypass the
         # canonical/alias mixing checks and the deprecation notices, which

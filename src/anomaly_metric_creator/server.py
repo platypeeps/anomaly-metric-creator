@@ -1439,9 +1439,9 @@ def _build_serve_parser() -> argparse.ArgumentParser:
         prog="anomaly-metric-creator.py serve",
         description="Run the anomaly simulator as an HTTP server with Kubernetes/Helm command responses.",
         epilog=(
-            "Any unrecognized options are parsed as normal generate options "
-            "(for example --scenarios, --components, --duration-days, "
-            "--otel-send, and --otel-endpoint)."
+            "Other options go to the generate parser (for example --scenarios, "
+            "--components, --duration-days, --otel-send, --otel-endpoint); "
+            "an option neither parser accepts is refused, by name only."
         ),
         allow_abbrev=False,
     )

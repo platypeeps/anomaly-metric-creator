@@ -17,6 +17,7 @@ forks. Sources:
 `src/anomaly_metric_creator/catalog.py`; `src/anomaly_metric_creator/otel.py`;
 `src/anomaly_metric_creator/scenarios.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/cli_args.py`;
+`src/anomaly_metric_creator/cli_argv_safety.py`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
 `src/anomaly_metric_creator/version.py`;
 `src/anomaly_metric_creator/run_pipeline.py`;
@@ -81,7 +82,9 @@ derivation, and long-form dimension validation), `validate_topology.py`
 (aggregate topology coupling validation), `validate_topology_instances.py`
 (per-instance topology coupling validation), `otel_stream.py` (OTEL HTTP
 streaming), `cli_args.py` (parser construction, CLI reconciliation, and
-generate-flag validation), `cli_subcommands.py` (dedicated `combine`,
+generate-flag validation), `cli_argv_safety.py` (the value-safe
+unrecognized-arguments error shared by the generate parser and the serve
+pass-through refusal; imports nothing from the package), `cli_subcommands.py` (dedicated `combine`,
 `validate`, `serve`, and `trace-bundle` subcommand dispatch helpers),
 `version.py` (installed-distribution version discovery with caller-owned
 source-tree fallbacks),
@@ -142,6 +145,7 @@ name mapping may still come from the live registry. Sources:
 `src/anomaly_metric_creator/otel.py`; `src/anomaly_metric_creator/schema.py`;
 `src/anomaly_metric_creator/otel_stream.py`;
 `src/anomaly_metric_creator/cli_args.py`;
+`src/anomaly_metric_creator/cli_argv_safety.py`;
 `src/anomaly_metric_creator/cli_subcommands.py`;
 `src/anomaly_metric_creator/models_impl.py`;
 `src/anomaly_metric_creator/catalog.py`;

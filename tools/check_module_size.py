@@ -151,8 +151,10 @@ RATCHET: dict[str, tuple[int, str]] = {
         "TypedDicts (08-06-server-traces-mypy-gate), a non-separable addition",
     ),
     "cli_args.py": (
-        960,
-        "debt: CLI parser, not yet decomposed",
+        961,
+        "debt: CLI parser, not yet decomposed; +1 from sd:265 for the import "
+        "of ValueSafeArgumentParser, a non-separable addition -- the parser "
+        "class itself lives in the cli_argv_safety.py leaf",
     ),
 }
 

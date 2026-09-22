@@ -24,6 +24,8 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from .cli_argv_safety import UnrecognizedArguments, describe_unrecognized, flag_names
+
 
 _SERVE_CONFIG_SERVER_KEYS = {
     "host",
@@ -279,7 +281,7 @@ def _config_flag_names(argv: list[str]) -> str:
     construction instead of by pattern, and the flag name is what identifies
     the mistake anyway.
     """
-    names = sorted({token.split("=", 1)[0] for token in argv if token.startswith("--")})
+    names = flag_names(argv)
     return ", ".join(names) if names else "(none)"
 
 
@@ -561,6 +563,39 @@ def _probe_config_server_argv(
         ) from exc
 
 
+def _refuse_arguments_no_parser_owns(
+    generate_argv: list[str],
+    parse_args: Callable[..., Any],
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Refuse a token that neither the serve nor the generate parser owns.
+
+    ``amc serve`` forwards whatever its own parser leaves over to the generate
+    parser, and that pass-through is load-bearing, so "refuse what serve does
+    not recognize" is not available as a rule. A token *neither* parser owns
+    is different: nothing will ever act on it. ``serve_main`` already refused
+    those, but late and in the wrong voice -- the generate parser's usage dump
+    and a message naming no serve flag, for a mistyped ``--conf`` or ``--por``.
+
+    This is the parse ``serve_main`` runs later, moved earlier so the refusal
+    names the command the operator typed. It acts only on
+    ``UnrecognizedArguments``; any other generate failure is left for
+    ``serve_main``'s own parse to report exactly as before. The message names
+    flags and never a value -- the token after a mistyped ``--auth-token`` is
+    the secret it was meant to set.
+    """
+    if not generate_argv:
+        return
+    failed = _generate_argv_parses(generate_argv, parse_args)
+    if failed is None or not isinstance(failed[0], UnrecognizedArguments):
+        return
+    parser.error(
+        f"{describe_unrecognized(failed[0].flags)}. Neither the serve flags nor "
+        "the generate flags serve forwards accept them; check the spelling "
+        "against `amc serve --help` and `amc generate --help-all`."
+    )
+
+
 def _parse_serve_args(
     argv: list[str],
     parser: argparse.ArgumentParser,
@@ -568,6 +603,7 @@ def _parse_serve_args(
     legacy_module: Any | None = None,
 ) -> tuple[argparse.Namespace, list[str]]:
     raw_argv = list(argv)
+    generate_parse_args = _resolve_generate_parse_args(legacy_module)
     config_path = _extract_serve_config_path(raw_argv, parser)
     config_server_argv: list[str] = []
     config_generate_argv: list[str] = []
@@ -577,7 +613,6 @@ def _parse_serve_args(
             config_server_argv = _config_mapping_to_argv(config["server"])
             config_generate_argv = _config_mapping_to_argv(config["generate"])
             _probe_config_server_argv(config_server_argv, config_path, parser)
-            generate_parse_args = _resolve_generate_parse_args(legacy_module)
             _vouch_no_flag_generate_keys(
                 config["generate"], config_path, generate_parse_args
             )
@@ -608,5 +643,9 @@ def _parse_serve_args(
             )
         except ValueError as exc:
             parser.error(str(exc))
+    # After the config probe, so a config's own bad key is still reported
+    # against the file; the probe stays quiet on a failure that is not the
+    # config's, which is what leaves a typo in the operator's argv to here.
+    _refuse_arguments_no_parser_owns(generate_argv, generate_parse_args, parser)
     serve_args.config = config_path
     return serve_args, generate_argv

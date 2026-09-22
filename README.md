@@ -170,7 +170,7 @@ amc trace-bundle search command-traces.json --status unsupported
 amc trace-bundle export-csv command-traces.json --output command-traces.csv
 
 # Run as an incident simulator server with a debug UI and Kubernetes/Helm
-# command API. Unrecognized serve options are parsed as normal generate flags:
+# command API. Options serve does not own are parsed as normal generate flags:
 amc serve \
   --port 8088 \
   --duration-days 2 \
@@ -335,9 +335,13 @@ Help is two-tier: `-h` shows the common surface in the five groups below;
 
 #### Server mode (`serve`)
 
-`serve` accepts its own HTTP/debug flags and forwards every unrecognized flag
+`serve` accepts its own HTTP/debug flags and forwards every other flag
 through the normal generation parser, so the scenario, component, instance,
-artifact, and OTEL knobs above all work unchanged:
+artifact, and OTEL knobs above all work unchanged. A flag that neither parser
+accepts -- a typo such as `--conf` or `--auth-tokn` -- stops `serve` before it
+generates or listens. The error names the flag and never prints its value, so
+a mistyped `--auth-token` does not write the token to the terminal. `amc
+generate` reports its own unrecognized flags the same way.
 
 ```bash
 amc serve \
