@@ -40,9 +40,12 @@ jobs:
           # and not the bare head SHA.
           #
           # Not `/merge`: GitHub does not create that ref for a pull request
-          # with conflicts, so the default fails this job at checkout on
-          # exactly the pull requests already having a bad day -- an advisory
-          # lane must never be the thing that makes one look worse.
+          # with conflicts. Measured on one (#966, sd:878), GitHub starts no
+          # `pull_request` run at all in that state, so this job never reaches
+          # checkout there. What the merge ref would lose is the window between
+          # the two -- mergeable when the event fires, conflicted by the time
+          # the runner checks out -- and that window has not been produced. An
+          # advisory lane must never be the thing that makes one look worse.
           #
           # Not the bare SHA: with `fetch-depth: 0`, `actions/checkout` fetches
           # `+refs/heads/*` and tags, and adds a pull refspec only when the ref
@@ -64,4 +67,4 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Report the routing plan
-        uses: platypeeps/sd-ai-command-pack/actions/review-route@00f6a7455f87d94cf86a67d90340fe5292814371
+        uses: platypeeps/sd-ai-command-pack/actions/review-route@47d4d147fa1b7cb819b6fe1fd2569c87f6280698
