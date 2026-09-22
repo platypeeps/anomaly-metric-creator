@@ -407,6 +407,32 @@ the historic `server.<name>` surface is unchanged. Sources:
 `src/anomaly_metric_creator/server_config.py`;
 `src/anomaly_metric_creator/server.py`; `README.md`; `tests/test_server.py`.
 
+**An argument neither parser owns is refused at parse time, by name only.**
+The serve parser uses `parse_known_args` and forwards its leftovers to the
+generate parser; that pass-through is load-bearing and stays. A token the
+generate parser does not own either is one nothing will act on, so
+`_refuse_arguments_no_parser_owns` runs the real generate parse on the merged
+`generate_argv` in `_parse_serve_args` and refuses in serve's voice, before
+generation or bind. It acts only on `UnrecognizedArguments`; every other
+generate failure is left to the real parse, as before. It runs *after* the
+config probes, so an unknown key the config file carries keeps its file
+attribution. The message names flags and never values:
+`cli_argv_safety.ValueSafeArgumentParser` replaces argparse's
+`unrecognized arguments: <tokens>`, which echoed raw argv, so
+`amc serve --auth-tokn s3cret` printed the token. The generate parser uses the
+same class, so plain `amc generate` inherits the fix. `flag_names` keeps each
+dash-led token cut at its first `=` and drops the rest -- separate values,
+negative numbers, positionals -- rather than masking them, for the reasons the
+no-values rule above gives. A dash-led token right after a flag written
+without `=` is dropped too, since an unknown flag's arity is unknowable and
+`--auth-tokn -s3cret` is a value, and so is everything after a bare `--`. Out of scope: a *recognized* flag with a bad value
+still gets argparse's own message (`invalid int value: 'x'`); no string-typed
+flag such as `--auth-token` can reach it. The `combine`, `validate`, and
+`trace-bundle` parsers still use plain `argparse.ArgumentParser`. Sources:
+`src/anomaly_metric_creator/cli_argv_safety.py`;
+`src/anomaly_metric_creator/server_config.py`;
+`tests/test_unrecognized_argument_values.py`.
+
 `amc serve` must generate once before listening unless `--no-generate` is set,
 must append `--otel-send none` to startup generation so the listener is not
 blocked by OTEL, and must serialize continuous regeneration with OTEL replay

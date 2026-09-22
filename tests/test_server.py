@@ -3186,22 +3186,27 @@ def test_a_parser_diagnostic_does_not_echo_config_values(tmp_path, capsys):
     assert "s3cret" not in stderr
 
 
-def test_a_failure_the_config_did_not_cause_is_not_blamed_on_it(tmp_path):
+def test_a_failure_the_config_did_not_cause_is_not_blamed_on_it(tmp_path, capsys):
     """Both parses failing is not enough; they must fail for the same reason.
 
     Here the config section alone trips the cross-flag cell cap, and the merged
     argv fails on the user's own typo. Naming the config file would send the
-    operator to the wrong place, so the real parse reports its own error later.
+    operator to the wrong place, so the typo is reported as the operator's own:
+    refused by name after the config probe has stayed quiet.
     """
     config_path = tmp_path / "serve-config.json"
     config_path.write_text(
         json.dumps({"generate": {"interval_seconds": 1}}), encoding="utf-8"
     )
     parser = server._build_serve_parser()
-    _, generate_argv = server._parse_serve_args(
-        ["--config", str(config_path), "--componentss", "x"], parser
-    )
-    assert "--componentss" in generate_argv
+    with pytest.raises(SystemExit) as excinfo:
+        server._parse_serve_args(
+            ["--config", str(config_path), "--componentss", "x"], parser
+        )
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "unrecognized arguments: --componentss" in stderr
+    assert str(config_path) not in stderr
 
 
 def test_the_config_is_still_blamed_for_a_failure_that_is_its_own(tmp_path, capsys):

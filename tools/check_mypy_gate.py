@@ -18,6 +18,7 @@ CLEAN_MODULES: tuple[str, ...] = (
     "src/anomaly_metric_creator/__init__.py",
     "src/anomaly_metric_creator/artifacts.py",
     "src/anomaly_metric_creator/cli.py",
+    "src/anomaly_metric_creator/cli_argv_safety.py",
     "src/anomaly_metric_creator/combine.py",
     "src/anomaly_metric_creator/gauges_impl.py",
     "src/anomaly_metric_creator/models.py",

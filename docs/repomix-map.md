@@ -88,6 +88,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
+  sd-status.json
 .opencode/
   skills/
     amc-server-compatibility/
@@ -518,6 +519,7 @@ docs/
           prd.md
         2026-08-26-ratchet-entry-ownership/
           prd.md
+    .status-source
   application-flow.md
   DEVELOPMENT_CYCLE.md
   REVIEW_PATTERNS.md
@@ -536,6 +538,7 @@ src/
     artifacts.py
     catalog.py
     cli_args.py
+    cli_argv_safety.py
     cli_subcommands.py
     cli.py
     combine_impl.py
@@ -669,6 +672,7 @@ tests/
   test_topology_saturation.py
   test_trace_bundle.py
   test_trace_payload_antipatterns_lint.py
+  test_unrecognized_argument_values.py
   test_validate_output.py
   test_version.py
   test_work_item_placeholder_lint.py
