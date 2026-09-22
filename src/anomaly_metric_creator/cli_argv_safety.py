@@ -37,14 +37,24 @@ def flag_names(tokens: Iterable[str]) -> list[str]:
     secret is not knowable here: a mistyped key is on no allowlist by
     definition, and masking by pattern kept missing forms argparse echoes. Not
     keeping any non-flag token closes the class by construction.
+
+    Two dash-led shapes are values too, so they are dropped as well. A token
+    that follows a flag written without ``=`` may be that flag's value --
+    ``--auth-tokn -s3cret`` -- since an unknown flag's arity is unknowable;
+    this can cost the name of a second typo, never a value. And everything
+    after a bare ``--`` is positional, which argparse leaves in the extras.
     """
     names: set[str] = set()
+    may_take_value = False
     for token in tokens:
-        if not token.startswith("-") or _NEGATIVE_NUMBER.match(token):
-            continue
-        name = token.split("=", 1)[0]
-        if name.strip("-"):
-            names.add(name)
+        if token == "--":
+            break
+        is_flag = token.startswith("-") and not _NEGATIVE_NUMBER.match(token)
+        if is_flag and not may_take_value:
+            name = token.split("=", 1)[0]
+            if name.strip("-"):
+                names.add(name)
+        may_take_value = is_flag and "=" not in token
     return sorted(names)
 
 

@@ -423,7 +423,9 @@ attribution. The message names flags and never values:
 same class, so plain `amc generate` inherits the fix. `flag_names` keeps each
 dash-led token cut at its first `=` and drops the rest -- separate values,
 negative numbers, positionals -- rather than masking them, for the reasons the
-no-values rule above gives. Out of scope: a *recognized* flag with a bad value
+no-values rule above gives. A dash-led token right after a flag written
+without `=` is dropped too, since an unknown flag's arity is unknowable and
+`--auth-tokn -s3cret` is a value, and so is everything after a bare `--`. Out of scope: a *recognized* flag with a bad value
 still gets argparse's own message (`invalid int value: 'x'`); no string-typed
 flag such as `--auth-token` can reach it. The `combine`, `validate`, and
 `trace-bundle` parsers still use plain `argparse.ArgumentParser`. Sources:

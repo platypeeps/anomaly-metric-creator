@@ -39,7 +39,15 @@ SECRET = "s3cret-must-not-appear"
         # Nothing but dashes names no flag, including after an `=` cut.
         (["--", "-", f"--={SECRET}"], []),
         ([SECRET], []),
-        (["--b", "--a=1", "--b=2"], ["--a", "--b"]),
+        (["--b=0", "--a=1", "--b=2"], ["--a", "--b"]),
+        # A dash-led value after a flag with no `=` is that flag's value.
+        (["--auth-tokn", "-s3cret"], ["--auth-tokn"]),
+        (["--a", "--b", "-c"], ["--a"]),
+        (["--a=1", "--b"], ["--a", "--b"]),
+        (["--a", "val", "--b"], ["--a", "--b"]),
+        # Everything after a bare `--` is positional, however it is spelled.
+        (["--", "--s3cret"], []),
+        (["--typo", "--", "--s3cret"], ["--typo"]),
     ],
 )
 def test_flag_names_keeps_flags_and_drops_every_value(tokens, expected):
@@ -98,7 +106,15 @@ def test_other_errors_keep_argparse_own_message(capsys):
 # -- the generate CLI -------------------------------------------------------
 
 
-@pytest.mark.parametrize("argv", [["--typo-flag", SECRET], [f"--typo-flag={SECRET}"]])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--typo-flag", SECRET],
+        [f"--typo-flag={SECRET}"],
+        ["--typo-flag", f"-{SECRET}"],
+        ["--typo-flag", "--", f"--{SECRET}"],
+    ],
+)
 def test_generate_parser_refuses_a_typo_without_its_value(argv, capsys):
     with pytest.raises(UnrecognizedArguments) as excinfo:
         legacy.parse_args(argv)
@@ -124,8 +140,13 @@ def _serve_stderr(argv, capsys) -> str:
 
 @pytest.mark.parametrize(
     "argv",
-    [["--auth-tokn", SECRET], [f"--auth-tokn={SECRET}"]],
-    ids=["separate", "joined"],
+    [
+        ["--auth-tokn", SECRET],
+        [f"--auth-tokn={SECRET}"],
+        ["--auth-tokn", f"-{SECRET}"],
+        ["--auth-tokn", "--", f"--{SECRET}"],
+    ],
+    ids=["separate", "joined", "dash-led", "after-double-dash"],
 )
 def test_serve_refuses_a_mistyped_auth_flag_without_echoing_the_secret(argv, capsys):
     err = _serve_stderr(argv, capsys)
