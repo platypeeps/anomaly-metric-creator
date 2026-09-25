@@ -4,8 +4,8 @@ name: Dependabot auto-merge
 # on pull_request_target and never checks out PR code, so it can use write
 # permissions only for metadata and auto-merge setup. It deliberately does not
 # approve PRs because this repo does not allow GitHub Actions to create pull
-# request reviews. The merge still waits for branch-protection checks such as
-# `test`.
+# request reviews. The merge still waits for the branch-protection check
+# `CI Result`. A ruff-pre-commit bump is excluded; see the step below.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
@@ -30,8 +30,13 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Never for astral-sh/ruff-pre-commit: that PR moves only the hook
+      # `rev`, while `lockfile-only` leaves the matching `ruff==` pin in
+      # pyproject.toml behind, so tools/check_ruff_lockstep.py fails it by
+      # construction. A human pushes the `ruff==` and uv.lock bump onto the
+      # PR and merges it. Pinned by tools/check_ci_review_contract.py.
       - name: Enable auto-merge for patch + minor
-        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+        if: (steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor') && !contains(steps.meta.outputs.dependency-names, 'astral-sh/ruff-pre-commit')
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

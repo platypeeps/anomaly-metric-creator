@@ -56,7 +56,8 @@ dev = [
   "pyyaml>=6.0.3",
   # Pinned exactly: must match `rev: vX.Y.Z` in `.pre-commit-config.yaml`
   # so a local `ruff check` and the `ruff-pre-commit` hook resolve the
-  # same binary. Bump both lines together.
+  # same binary. Bump both lines together, plus `uv.lock`. Dependabot moves
+  # only the pre-commit `rev` and never auto-merges it.
   "ruff==0.16.8",
   "pre-commit>=3.7.0",
   # Pinned exactly: CI runs mypy in a report-only baseline step (finding

@@ -889,6 +889,14 @@ def _check_dependabot(path: Path, text: str, violations: list[str]) -> None:
         ("pull_request_target trigger", "pull_request_target:"),
         ("dependabot actor guard", "dependabot[bot]"),
         ("auto-merge step", "gh pr merge --auto --squash"),
+        # A ruff-pre-commit PR moves only the hook `rev`; `lockfile-only`
+        # leaves the `ruff==` pin behind, so it is drift by construction and
+        # must wait for a human to push the paired bump.
+        (
+            "ruff-pre-commit auto-merge exclusion",
+            "!contains(steps.meta.outputs.dependency-names, "
+            "'astral-sh/ruff-pre-commit')",
+        ),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
     _require_not_contains(

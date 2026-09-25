@@ -167,7 +167,10 @@ Socket keeps a visible
 PR check, but fast-skips unless dependency/security-relevant files changed or
 full CI was requested. Dependabot auto-merge enables GitHub auto-merge for
 patch/minor updates, but does not try to approve the PR with `GITHUB_TOKEN`;
-this repo's workflow token is not allowed to create PR reviews.
+this repo's workflow token is not allowed to create PR reviews. It never arms
+auto-merge for an `astral-sh/ruff-pre-commit` bump: that PR moves only the hook
+`rev`, so it fails the ruff lockstep check until a human pushes the matching
+`ruff==` pin and `uv.lock` bump onto it (`uv lock --upgrade-package ruff`).
 
 This repository no longer refreshes the command pack from CI. The thin
 conversion moved the payload to the machine install, so there is nothing left

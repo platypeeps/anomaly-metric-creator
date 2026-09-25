@@ -258,7 +258,8 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
           auto-merge:
             if: github.event.pull_request.user.login == 'dependabot[bot]'
             steps:
-              - run: gh pr merge --auto --squash "$PR_URL"
+              - if: (steps.meta.outputs.update-type == 'version-update:semver-patch') && !contains(steps.meta.outputs.dependency-names, 'astral-sh/ruff-pre-commit')
+                run: gh pr merge --auto --squash "$PR_URL"
         """,
     )
     _write(
@@ -1311,8 +1312,8 @@ def test_dependabot_auto_merge_forbids_actions_pr_approval(tmp_path: Path) -> No
     workflow = tmp_path / ".github/workflows/dependabot-auto-merge.yml"
     workflow.write_text(
         workflow.read_text(encoding="utf-8").replace(
-            '- run: gh pr merge --auto --squash "$PR_URL"',
-            '- run: gh pr review --approve "$PR_URL"\n'
+            '  run: gh pr merge --auto --squash "$PR_URL"',
+            '  run: gh pr review --approve "$PR_URL"\n'
             '              - run: gh pr merge --auto --squash "$PR_URL"',
         ),
         encoding="utf-8",
@@ -1322,6 +1323,27 @@ def test_dependabot_auto_merge_forbids_actions_pr_approval(tmp_path: Path) -> No
 
     assert result.returncode == 1
     assert "GitHub Actions PR approval" in result.stderr
+
+
+def test_dependabot_auto_merge_excludes_ruff_pre_commit(tmp_path: Path) -> None:
+    # A ruff-pre-commit PR moves only the hook `rev`; `lockfile-only` leaves
+    # the `ruff==` pin behind, so the PR is drift by construction and must
+    # never arm auto-merge (sd:1318).
+    _write_minimal_contract(tmp_path)
+    workflow = tmp_path / ".github/workflows/dependabot-auto-merge.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace(
+            " && !contains(steps.meta.outputs.dependency-names, "
+            "'astral-sh/ruff-pre-commit')",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(str(tmp_path))
+
+    assert result.returncode == 1
+    assert "ruff-pre-commit auto-merge exclusion" in result.stderr
 
 
 def test_lightweight_whitespace_requires_pr_diff_range(tmp_path: Path) -> None:
