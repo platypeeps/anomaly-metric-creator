@@ -7,6 +7,13 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- `amc combine`, `amc validate`, and `amc trace-bundle` now refuse a mistyped
+  flag by name, as `amc` and `amc serve` already do: `unrecognized arguments:
+  --typo (values are not shown)`. They previously echoed the raw tokens,
+  including any value typed after the mistyped flag. The exit code stays `2`.
+  For `trace-bundle` this covers a typo after the subcommand name only; a typo
+  before it still reaches argparse's `invalid choice` error, which echoes the
+  value.
 - Dependabot auto-merge no longer arms for `astral-sh/ruff-pre-commit` bumps.
   Such a PR moves only the pre-commit `rev` and fails the ruff lockstep check
   by construction, so it now waits for a human to push the matching `ruff==`

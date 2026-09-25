@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from .cli_argv_safety import ValueSafeArgumentParser
 from .server_traces import (
     COMMAND_TRACE_EXPORT_VERSION,
     CommandTrace,
@@ -272,7 +273,8 @@ def write_trace_bundle_csv(bundle: TraceBundle, output_path: str | Path) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    # Value-safe: a mistyped flag is refused by name, never echoing its value.
+    parser = ValueSafeArgumentParser(
         prog="amc trace-bundle",
         description=(
             "Inspect exported command trace bundles offline without starting "
