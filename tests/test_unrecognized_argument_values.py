@@ -267,3 +267,35 @@ def test_subcommand_parsers_refuse_a_typo_without_its_value(
     err = capsys.readouterr().err
     assert "unrecognized arguments: --typo-flag" in err
     assert SECRET not in err
+
+
+@pytest.mark.parametrize(
+    "typo",
+    [
+        ["--typo-flag", SECRET],
+        [f"--typo-flag={SECRET}"],
+        ["--typo-flag", f"-{SECRET}"],
+    ],
+    ids=["separate", "joined", "dash-led"],
+)
+def test_trace_bundle_typo_before_the_subcommand_name_hides_its_value(
+    typo, tmp_path, capsys
+):
+    # Before the subcommand name, the top-level parser sets the typo aside and
+    # can take its value as the subcommand choice (sd:1462).
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["trace-bundle", *typo, "summary", str(tmp_path)])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert SECRET not in err
+
+
+def test_trace_bundle_wrong_subcommand_name_still_lists_the_choices(
+    tmp_path, capsys
+):
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["trace-bundle", "summry", str(tmp_path)])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "invalid choice" in err
+    assert "choose from 'summary', 'search', 'unsupported', 'export-csv'" in err
