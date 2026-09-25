@@ -6,9 +6,10 @@ on the ``astral-sh/ruff-pre-commit`` hook in ``.pre-commit-config.yaml``.
 Since the repo moved Dependabot to ``versioning-strategy: lockfile-only``
 (PR #115), the ``uv`` ecosystem no longer bumps the exact ``ruff==`` pin,
 so only the ``pre-commit`` ecosystem advances the ``rev`` — the two can
-drift, and with auto-merge enabled a lone ``rev`` bump could merge stale.
-This guard runs in the required CI ``test`` gate to turn that drift into a
-red check.
+drift. This guard runs in the CI quick and light lanes to turn that drift
+into a red ``CI Result``; ``dependabot-auto-merge.yml`` never arms
+auto-merge for the ruff-pre-commit PR, so a red one cannot land unattended
+even while branch protection is off.
 
 Pin the behaviors the script promises in its docstring:
 
