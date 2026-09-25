@@ -83,8 +83,8 @@ derivation, and long-form dimension validation), `validate_topology.py`
 (per-instance topology coupling validation), `otel_stream.py` (OTEL HTTP
 streaming), `cli_args.py` (parser construction, CLI reconciliation, and
 generate-flag validation), `cli_argv_safety.py` (the value-safe
-unrecognized-arguments error shared by the generate parser and the serve
-pass-through refusal; imports nothing from the package), `cli_subcommands.py` (dedicated `combine`,
+unrecognized-arguments error shared by the generate, `combine`, `validate`,
+and `trace-bundle` parsers and the serve pass-through refusal; imports nothing from the package), `cli_subcommands.py` (dedicated `combine`,
 `validate`, `serve`, and `trace-bundle` subcommand dispatch helpers),
 `version.py` (installed-distribution version discovery with caller-owned
 source-tree fallbacks),

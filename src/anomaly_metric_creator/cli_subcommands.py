@@ -7,12 +7,12 @@ historic ``legacy.<name>`` surface.
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
 
+from .cli_argv_safety import ValueSafeArgumentParser
 from .combine_impl import combine_logs
 from .validate_impl import validate_output
 
@@ -72,7 +72,7 @@ def _main_combine_subcommand(argv, *, runtime_key: str = _DEFAULT_RUNTIME_KEY):
     """``combine DIR [--components ...]``: skip generation and join the
     existing per-component CSVs in DIR into combined_metrics_unified.csv.
     """
-    sp = argparse.ArgumentParser(
+    sp = ValueSafeArgumentParser(
         prog="anomaly-metric-creator.py combine",
         description="Join existing per-component CSVs in DIR into "
                     "combined_metrics_unified.csv (no generation).",
@@ -104,7 +104,7 @@ def _main_validate_subcommand(argv, *, runtime_key: str = _DEFAULT_RUNTIME_KEY):
     """``validate DIR [--warn]``: check the artifacts in DIR against
     DIR/schema.json and exit 1 on violations (0 with --warn).
     """
-    sp = argparse.ArgumentParser(
+    sp = ValueSafeArgumentParser(
         prog="anomaly-metric-creator.py validate",
         description="Validate the artifacts in DIR against DIR/schema.json.",
     )

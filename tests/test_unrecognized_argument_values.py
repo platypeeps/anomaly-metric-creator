@@ -231,3 +231,39 @@ def test_a_config_generate_key_no_parser_owns_is_still_blamed_on_the_file(
     assert str(config_path) in err
     assert "--no-such-generate-key" in err
     assert SECRET not in err
+
+
+# -- combine, validate, trace-bundle ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "subcommand",
+    [
+        ["combine"],
+        ["validate"],
+        ["trace-bundle", "summary"],
+        ["trace-bundle", "search"],
+        ["trace-bundle", "unsupported"],
+        ["trace-bundle", "export-csv", "--output", "out.csv"],
+    ],
+    ids=lambda argv: " ".join(argv[:2]),
+)
+@pytest.mark.parametrize(
+    "typo",
+    [
+        ["--typo-flag", SECRET],
+        [f"--typo-flag={SECRET}"],
+        ["--typo-flag", f"-{SECRET}"],
+    ],
+    ids=["separate", "joined", "dash-led"],
+)
+def test_subcommand_parsers_refuse_a_typo_without_its_value(
+    subcommand, typo, tmp_path, capsys
+):
+    # The positional is a real path so only the typo can fail the parse.
+    with pytest.raises(UnrecognizedArguments) as excinfo:
+        cli.main([*subcommand, str(tmp_path), *typo])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "unrecognized arguments: --typo-flag" in err
+    assert SECRET not in err
