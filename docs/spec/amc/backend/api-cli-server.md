@@ -429,9 +429,10 @@ without `=` is dropped too, since an unknown flag's arity is unknowable and
 still gets argparse's own message (`invalid int value: 'x'`); no string-typed
 flag such as `--auth-token` can reach it. The `combine`, `validate`, and
 `trace-bundle` parsers use the same class, so a typo after the subcommand
-name is refused by name too. Still open: a typo *before* the `trace-bundle`
-subcommand name (`amc trace-bundle --typo s3cret summary x`) lets the value
-become the subcommand choice, and argparse's `invalid choice` error echoes it.
+name is refused by name too. A typo *before* the `trace-bundle` subcommand
+name (`amc trace-bundle --typo s3cret summary x`) lets its value become the
+subcommand choice, so the class's invalid-choice error for a subcommand names
+the choices and never the value.
 Sources:
 `src/anomaly_metric_creator/cli_argv_safety.py`;
 `src/anomaly_metric_creator/server_config.py`;

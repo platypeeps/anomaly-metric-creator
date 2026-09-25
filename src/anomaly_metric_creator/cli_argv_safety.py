@@ -90,6 +90,22 @@ class ValueSafeArgumentParser(argparse.ArgumentParser):
     and are out of this class's scope.
     """
 
+    def _check_value(self, action: argparse.Action, value: Any) -> None:
+        # A mistyped flag before a subcommand name is set aside, and its value
+        # becomes the subcommand choice (sd:1462). argparse's invalid-choice
+        # message would quote it, so name the choices and not the value.
+        if (
+            isinstance(action, argparse._SubParsersAction)
+            and action.choices is not None
+            and value not in action.choices
+        ):
+            choices = ", ".join(repr(str(choice)) for choice in action.choices)
+            raise argparse.ArgumentError(
+                action,
+                f"invalid choice (value not shown; choose from {choices})",
+            )
+        super()._check_value(action, value)
+
     def parse_args(  # type: ignore[override]
         self,
         args: Sequence[str] | None = None,
