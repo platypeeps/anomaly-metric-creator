@@ -11,6 +11,9 @@ authoritative history is the GitHub release notes and the git commit log; the
   flag by name, as `amc` and `amc serve` already do: `unrecognized arguments:
   --typo (values are not shown)`. They previously echoed the raw tokens,
   including any value typed after the mistyped flag. The exit code stays `2`.
+  For `trace-bundle` this covers a typo after the subcommand name only; a typo
+  before it still reaches argparse's `invalid choice` error, which echoes the
+  value.
 - Added `tools/check_repomix_map_freshness.py` (pre-commit hook +
   unconditional CI step) failing when a path listed in the generated
   `docs/repomix-map.md` is no longer tracked. Developer tooling only: no CLI,
