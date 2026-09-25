@@ -7,6 +7,11 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- Dependabot auto-merge no longer arms for `astral-sh/ruff-pre-commit` bumps.
+  Such a PR moves only the pre-commit `rev` and fails the ruff lockstep check
+  by construction, so it now waits for a human to push the matching `ruff==`
+  and `uv.lock` bump. `tools/check_ci_review_contract.py` pins the exclusion.
+  Developer tooling only: no CLI, HTTP, or output change.
 - Added `tools/check_repomix_map_freshness.py` (pre-commit hook +
   unconditional CI step) failing when a path listed in the generated
   `docs/repomix-map.md` is no longer tracked. Developer tooling only: no CLI,

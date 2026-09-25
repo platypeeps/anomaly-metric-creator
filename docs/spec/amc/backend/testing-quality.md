@@ -275,9 +275,15 @@ acceptance test, and is not wired into pre-commit or CI. Sources:
 
 Ruff is pinned in two places that must stay in lockstep: the `ruff==` dev-extra
 pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
-`.pre-commit-config.yaml`. Sources: `pyproject.toml`;
-`.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
-`tests/test_ruff_lockstep_lint.py`.
+`.pre-commit-config.yaml`. Dependabot moves only the `rev` (the `uv`
+ecosystem's `lockfile-only` strategy cannot move an `==` pin), so every
+ruff-pre-commit Dependabot PR fails `tools/check_ruff_lockstep.py` by
+construction. `dependabot-auto-merge.yml` never arms auto-merge for that PR,
+and `tools/check_ci_review_contract.py` pins the exclusion; a human pushes
+the matching `ruff==` and `uv.lock` bump onto it, then merges. Sources:
+`pyproject.toml`; `.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
+`.github/workflows/dependabot-auto-merge.yml`;
+`tests/test_ruff_lockstep_lint.py`; `tests/test_ci_review_contract.py`.
 
 Two other exact `==` pins have no automated update path — Dependabot's
 `lockfile-only` `uv` strategy cannot move a manifest `==`, and the workflow
@@ -673,7 +679,9 @@ dependency/security-relevant files changed or full CI was requested. Sources:
 
 Dependabot auto-merge should enable GitHub auto-merge for patch/minor updates
 without trying to approve the pull request with `GITHUB_TOKEN`, because this
-repo's workflow token is not allowed to create PR reviews. Sources:
+repo's workflow token is not allowed to create PR reviews. It must never arm
+auto-merge for `astral-sh/ruff-pre-commit`, whose PR moves one side of the
+ruff lockstep pair only. Sources:
 `.github/workflows/dependabot-auto-merge.yml`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
 

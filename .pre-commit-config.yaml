@@ -7,7 +7,8 @@ repos:
     # `rev` must match the `ruff==X.Y.Z` pin in
     # `[project.optional-dependencies].dev` in `pyproject.toml` so a
     # local `ruff check` and this hook resolve the same binary. Bump
-    # both lines together.
+    # both lines together. Dependabot bumps only this `rev` and never
+    # auto-merges it; push the `ruff==` and `uv.lock` bump onto its PR.
     rev: v0.16.8
     hooks:
       - id: ruff
