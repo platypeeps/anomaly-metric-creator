@@ -1,0 +1,4 @@
+{
+  "$schema": "https://raw.githubusercontent.com/platypeeps/sd-ai-command-pack/main/.github/sd-review.schema.json",
+  "severity_floor": "high"
+}
