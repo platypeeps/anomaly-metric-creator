@@ -9,8 +9,8 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 - Added `.github/sd-review.json` with `"severity_floor": "high"`: only
   high-severity `sd-review` findings now block a merge. Review process only:
-  no CLI, HTTP, or output change.
-
+  no CLI, HTTP, or output change. The backend spec index now also links its
+  five compatibility-pointer files, which the pack's `sd-docs-lint` requires.
 - `amc combine`, `amc validate`, and `amc trace-bundle` now refuse a mistyped
   flag by name, as `amc` and `amc serve` already do: `unrecognized arguments:
   --typo (values are not shown)`. They previously echoed the raw tokens,
