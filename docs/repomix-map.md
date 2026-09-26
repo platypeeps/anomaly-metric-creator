@@ -88,6 +88,7 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
+  sd-review.json
 .opencode/
   skills/
     amc-server-compatibility/

@@ -74,6 +74,14 @@ put durable conventions in the focused guides above. Sources:
 `docs/spec/amc/backend/logging-guidelines.md`;
 `docs/spec/amc/backend/quality-guidelines.md`.
 
+| Compatibility pointer | Points to |
+| --- | --- |
+| [Directory Structure](./directory-structure.md) | Architecture |
+| [Persistence](./database-guidelines.md) | Operations, Security, and Logging; API, CLI, and Server |
+| [Error Handling](./error-handling.md) | API, CLI, and Server; Operations, Security, and Logging; Testing and Quality |
+| [Logging](./logging-guidelines.md) | Operations, Security, and Logging |
+| [Quality](./quality-guidelines.md) | Testing and Quality; Documentation and Review |
+
 ## Source Precedence
 
 When sources disagree, prefer executable code and tests first, current
