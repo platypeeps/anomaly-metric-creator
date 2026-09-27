@@ -227,7 +227,8 @@ amc \
   --otel-endpoint http://localhost:4318 \
   --otel-stream-speedup 3600
 
-# Stream with signal-specific env controls (still requires --otel-send):
+# Stream with signal-specific env controls (still requires --otel-send).
+# .env.example lists every MEZMO_OTEL_* variable with change-me values:
 MEZMO_OTEL_LOGS_ENDPOINT=http://localhost:4318/v1/logs \
 MEZMO_OTEL_LOGS_AUTH_TOKEN=secret \
 amc --otel-send logs
