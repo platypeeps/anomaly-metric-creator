@@ -47,6 +47,10 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
         server-compatibility-map.md
       SKILL.md
 .claude/
+  rules/
+    determinism.md
+    extraction.md
+    repository-lints.md
   skills/
     amc-server-compatibility/
       agents/

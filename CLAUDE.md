@@ -81,94 +81,15 @@ does not cover global-name resolution inside the module, so a delegated one
 fails with a `NameError` on one request path), and `__dunder__` names are not
 forwarded (`server_ops` has `__all__`; `server.py` must not inherit it).
 
-## Extraction / re-import invariant
+## Area rules
 
-The `07-02-legacy-monolith-decomposition` epic moves code out of `legacy.py`
-under a fixed pattern. Follow it exactly:
+These load from `.claude/rules/` when you touch matching paths.
 
-- Code moves **verbatim**. `legacy.py` re-imports every moved name at the same
-  conceptual location, so the historic `legacy.<name>` surface (shim, facades,
-  tests, server `state.legacy` lookups) is unchanged.
-- **New modules never import `legacy`** — the dependency direction is one-way.
-  When an extracted module must read a registry still owned by `legacy.py`,
-  `legacy.py` configures a **named, weak-referenceable live callback** and the
-  leaf reads the current registry view through it. Named and weak-referenceable
-  matters: an isolated `legacy.py` test load must stay garbage-collectable.
-  Never snapshot a registry at import time and never add a reverse import.
-- Callers move with the code. `_wide_component_rows_are_monotonic` is called
-  only by `combine_logs_unified` in `combine_impl`, so a test stubbing the
-  pre-scan patches `anomaly_metric_creator.combine_impl.<name>` — not the
-  `legacy` re-import, because the intra-module call resolves in
-  `combine_impl`'s namespace.
-- Import-time validation stays at its historical `legacy.py` call site even
-  when the validator implementation moves, so validation order does not change.
-- **Splice hazard:** a line-range cut can overlap a *prior* extraction's
-  re-import stub. After any extraction, grep the moved range for `^from \.`
-  re-imports and confirm every leaf re-import still resolves.
-- Behavior modules stay under 800 lines, enforced by
-  `tools/check_module_size.py`. Modules already over the cap are enrolled in
-  its `RATCHET` with an exact ceiling; the tool, not this list, is the
-  inventory. `scenario_catalog.py` is the one *permanent* exception — a 2k-line
-  ordered declarative registry that must not acquire validation or runtime
-  orchestration. The rest are decomposition debt.
-- Growing an enrolled module has two sanctioned remedies, and the choice turns
-  on whether the addition is **separable**. Extract it when it is. Raise that
-  module's ceiling in the same diff when it is not — a `typing` import, a
-  widened annotation, one branch inside an existing function. The ratchet
-  forbids *unreviewed* growth, not growth; a bump is one line someone reads.
-  Do not decompose a 1k-line module to pay for an import.
-- `tests/conftest.py::_load_amc` and the fresh-copy loaders in
-  `test_correctness.py` / `test_determinism.py` load `legacy` **with package
-  context** (a real submodule import or a dotted spec name) so these re-import
-  seams resolve. A package-less `spec_from_file_location` copy fails on them.
-
-## Determinism contract
-
-For a fixed `--seed` and configuration, output bytes are a load-bearing
-contract with locked SHA-256 golden hashes across `tests/`.
-
-- The RNG is one `np.random.RandomState(seed)` created in `main()` and carried
-  on `RunContext.rng`, passed explicitly through `generate_component()`,
-  `_natural_column()`, and the anomaly override path. There is no module-level
-  RNG and no module-level mutable anomaly state — do not reintroduce either.
-- `generate_component()` sorts override specs with the stable key
-  `(row_idx, metric_name)`. For specs at **distinct** `(row_idx, metric)`
-  pairs, declaration order does not affect draws. When two specs **collide** on
-  the same pair — two cascades rounding to one row at a coarse
-  `--interval-seconds`, or a cascade inside a shaped primary span — the stable
-  sort preserves input order and the **last writer wins**. Preserve declaration
-  order within a scenario unless you have verified no collisions.
-- `--anomaly-count` sampling depends on two orders: the `COMPONENTS` dict
-  iteration order, and the order scenarios append into each component's list
-  (the `SCENARIOS` insertion order). Preserve both unless you intend to shift
-  the cap selection for the same seed.
-- Determinism regressions to watch for in production code: a `set` iterated to
-  build output-ordered rows (use `sorted()`), an *unseeded* `RandomState`
-  fallback when `rng` is omitted, `id()`-based spec identity, and float
-  `datetime.timestamp() * 1e9` where integer `timedelta` math is available.
-- `generate_component()` is fully vectorized — one numpy op per metric column,
-  anomalies as masked writes, CSV assembled via `np.char.add`. The suite drives
-  full 1-day and 7-day runs end-to-end through `main()`; keep that path
-  vectorized.
-
-## Pipeline order
-
-`generate_component()` runs one fixed sequence per component. Several rules
-depend on this order, so changes here are behavior changes:
-
-```
-natural column draw → anomaly overrides → dtype="int" cast →
-derivations → topology_capture snapshot → round → drop → CSV format
-```
-
-The `int` cast runs before derivations and before the capture, so derived
-columns and downstream coupling signals see the same whole integers the CSV
-records. Derived columns are recomputed *after* every override has settled, so
-an anomaly targeting `cacheservice.hit_ratio` directly is silently overwritten
-— drive `cache_hits` / `cache_misses` instead. Under realistic topology, each
-downstream is generated after its upstreams in `_topology_generation_order`,
-and cascade overrides are applied *after* saturation composition, so a cascade
-still pins its own cell.
+| Topic | File |
+| --- | --- |
+| Extraction / re-import invariant, the 800-line module ratchet | [`.claude/rules/extraction.md`](.claude/rules/extraction.md) |
+| Determinism contract, `generate_component()` pipeline order | [`.claude/rules/determinism.md`](.claude/rules/determinism.md) |
+| Repository lints (`tools/check_*.py` guards) | [`.claude/rules/repository-lints.md`](.claude/rules/repository-lints.md) |
 
 ## Working rules
 
@@ -257,35 +178,6 @@ Known Copilot false positives are catalogued in
 [testing-quality.md](docs/spec/amc/backend/testing-quality.md); verify a
 flag against current `HEAD` before acting, but treat flags as actionable by
 default.
-
-## Repository lints
-
-Each guard carries its full contract — pattern, invocation modes, escape
-hatches, and the `0` clean / `1` violation / `2` structural-error exit split —
-in its own module docstring. Read the script, not a copy of it.
-
-| Guard | Enforces |
-| --- | --- |
-| `tools/check_role_name_leaks.py` | internal role-name references in text-bearing files; stdin `-` mode pre-flights a comment body |
-| `tools/check_approval_duplicate.py` | duplicate / self-correction `APPROVED` PR comments, keyed on (author, head commit) |
-| `tools/pr_comment.sh` | the canonical wrapper: runs both comment gates, then `gh pr comment` |
-| `tools/check_branch_name.py` | branch names republishing an internal ticket literal (`pre-push`; install with `pre-commit install --hook-type pre-push`) |
-| `tools/check_ruff_lockstep.py` | the `ruff==` pin in `pyproject.toml` against the ruff-pre-commit `rev` |
-| `tools/check_csv_formula_trigger_lockstep.py` | the CSV formula-trigger set in `trace_bundle._CSV_FORMULA_TRIGGERS` against the debug UI's marked `csvCell` guard — two independent export paths, neither of which follows the other |
-| `tools/check_repomix_map_freshness.py` | every path listed in the generated `docs/repomix-map.md` still resolving to a tracked file or directory. Runs `always_run` because staleness comes from *other* files moving, not from editing the map. One direction is deliberately out of scope: a tracked file absent from the map. The map omits two tracked paths -- the artifact itself and `uv.lock`, the latter through Repomix's built-in defaults -- and nothing else; an archive commit that moves a `docs/work/` directory is expected to carry the regenerated map |
-| `tools/check_workflow_pip.py` | bare or unpinned `pip install` in workflows |
-| `tools/check_test_resource_cost.py` | whole-file reads of generated CSVs under `tests/` |
-| `tools/check_amc_module_load.py` | direct `spec_from_file_location` loads of `legacy.py` in tests |
-| `tools/check_mypy_gate.py` | the canonical clean-module mypy gate command and list |
-| `tools/check_module_size.py` | the 800-line behavior-module cap, ratcheted: an enrolled over-cap module grows only by a reviewed ceiling bump in the same diff, a finished extraction must drop its entry; `--list` prints the enrolled table |
-| `tools/check_ci_review_contract.py` | CI cadence, action pins, partition commands, aggregate guards |
-| `tools/check_copilot_instruction_contract.py` | checklist-heading lockstep across the spec, template, and Copilot instructions |
-| `tools/check_task_criteria_commands.py` | quoted acceptance-criteria commands in `docs/work/**/*.md` that cannot produce the output they claim |
-| `tools/check_guard_ci_coverage.py` | every `tools/check_*.py` on disk running in each of the three CI lanes (LIGHT / QUICK / FULL) its watched files can select, and each lint's own test file running in the QUICK lane; `--list` prints the per-lint coverage table |
-| `tools/check_work_item_placeholders.py`, `tools/check_python_syntax.py`, `tools/check_trace_payload_antipatterns.py` | placeholder, syntax, and trace-payload shapes |
-
-`tools/benchmark_combine.py` is the one intentional exception to the
-every-tool-has-tests convention: a measurement harness, not a lint.
 
 ## Local gates
 

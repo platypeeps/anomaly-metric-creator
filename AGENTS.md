@@ -21,17 +21,14 @@ or platform-adapter tree changes make the map stale, refresh it with
 `scripts/update_repomix`. Sources: `docs/repomix-map.md`,
 `scripts/update_repomix`, `docs/spec/amc/backend/documentation-review.md`.
 
-This file used to duplicate the agent guide and drifted from the runtime module
-after the SCENARIOS migration. To prevent that recurring, durable conventions
-now live in the `docs/spec/` tree; update the focused spec first and keep this
-file as a short entry point. Sources: `AGENTS.md`, `docs/spec/amc/backend/index.md`.
+Keep this file a short entry point; durable conventions belong in the focused
+spec under `docs/spec/`. Sources: `docs/spec/amc/backend/index.md`.
 
 ## Quick start
 
 ```bash
-# Install (editable, with dev dependencies)
-python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+# Install (editable, with dev dependencies, from uv.lock as CI does)
+uv sync --extra dev --locked
 
 # Generate default output (50,000 rows at 60s interval)
 .venv/bin/amc
@@ -47,12 +44,12 @@ python3 -m venv .venv
 
 | Path | Role |
 |------|------|
-| `src/anomaly_metric_creator/legacy.py` | Canonical implementation (large; being decomposed into focused modules — see `docs/repomix-map.md` for current sizes) |
+| `src/anomaly_metric_creator/legacy.py` | Compatibility facade: historic public binding and live-runtime wiring, not the behavior owner; edit the focused module (see CLAUDE.md § Module ownership map) |
 | `src/anomaly_metric_creator/cli.py` | Package entrypoint (thin loader) |
 | `anomaly-metric-creator.py` | Top-level compatibility shim |
 | `tests/conftest.py` | Session-scoped fixtures, `run_capture` helper |
 | `docs/repomix-map.md` | Generated Repomix repository map |
 | `scripts/update_repomix` | Refreshes `docs/repomix-map.md` |
 | `docs/spec/amc/backend/index.md` | Canonical development conventions |
-| `CLAUDE.md` | Claude Code adapter: module-ownership map, extraction and determinism invariants, spec routing |
+| `CLAUDE.md` | Claude Code adapter: module-ownership map and spec routing; area rules (extraction, determinism, lints) in `.claude/rules/` |
 | `README.md` | User-facing docs, CLI reference, scenario catalog |
