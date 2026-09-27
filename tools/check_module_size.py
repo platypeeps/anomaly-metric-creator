@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ratchet the 800-line behavior-module limit for the runtime package.
 
-`CLAUDE.md` and the backend specs state that behavior modules stay under 800
+`.claude/rules/extraction.md` and the backend specs state that behavior modules stay under 800
 lines. That was a prose rule with no enforcement, and prose drifted from the
 tree: the rule named `scenario_catalog.py` as "the one deliberate exception"
 while six other modules were also over the limit, all of them decomposition
