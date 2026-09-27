@@ -7,6 +7,13 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- Removed the advanced `.github/workflows/codeql.yml` workflow. Code scanning
+  now runs through GitHub's CodeQL default setup, enabled by the
+  organization's "GitHub recommended" security configuration; default setup
+  rejects advanced-setup uploads. `tools/check_ci_review_contract.py` drops its
+  CodeQL pin and `full-ci` re-check anchors and now fails any workflow step
+  that calls `github/codeql-action`. The Dependabot `codeql` group is gone.
+  CI and review process only: no CLI, HTTP, or output change.
 - Added a committed `.env.example` listing every `MEZMO_OTEL_*` variable the
   README documents, with `change-me` placeholders. `.gitignore` still ignores
   `.env` and `.env.*` but now tracks `.env.example` and `.env.*.example`.

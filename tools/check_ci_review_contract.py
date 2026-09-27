@@ -5,8 +5,13 @@ The workflow cadence is intentionally spread across a few files:
 
 * ``scripts/classify-ci-changes.sh`` owns path classification.
 * ``.github/workflows/ci.yml`` chooses the lightweight, quick, or full lane.
-* The Socket job, CodeQL workflow, and Dependabot workflow follow the same
-  review-economy policy.
+* The Socket job and Dependabot workflow follow the same review-economy
+  policy.
+
+Code scanning runs through GitHub's CodeQL default setup (the organization
+security configuration), not a workflow in this repository. With default
+setup on, GitHub rejects advanced-setup uploads, so this checker fails any
+workflow that calls ``github/codeql-action``.
 
 This checker is deliberately text-based and stdlib-only so pre-commit can run it
 without installing project dependencies or parsing YAML. It catches accidental
@@ -29,9 +34,7 @@ from pathlib import Path
 
 REQUIRED_FILES = {
     "ci": Path(".github/workflows/ci.yml"),
-    "codeql": Path(".github/workflows/codeql.yml"),
     "dependabot": Path(".github/workflows/dependabot-auto-merge.yml"),
-    "dependabot_config": Path(".github/dependabot.yml"),
     "pyproject": Path("pyproject.toml"),
     "precommit": Path(".pre-commit-config.yaml"),
     "classifier": Path("scripts/classify-ci-changes.sh"),
@@ -82,8 +85,8 @@ _LIGHTWEIGHT_PYTHON_GUARDS = (
     "tools/check_ci_review_contract.py",
     "tools/check_copilot_instruction_contract.py",
 )
-_CODEQL_ACTION_PATTERN = re.compile(
-    r"^\s*uses:\s*github/codeql-action/(init|analyze)@([0-9a-f]{40})(?:\s|$)",
+_ADVANCED_CODEQL_PATTERN = re.compile(
+    r"^\s*(?:-\s*)?uses:\s*github/codeql-action/",
     re.MULTILINE,
 )
 
@@ -126,38 +129,6 @@ def _single_pinned_action_revision(
         return None
 
     return unique_revisions[0]
-
-
-def _shared_pinned_action_revisions(
-    root: Path,
-    texts: dict[str, str],
-    action: str,
-    keys: tuple[str, ...],
-    *,
-    violations: list[str],
-) -> dict[str, str]:
-    """Validate one pinned revision across the selected workflow files."""
-    revisions: dict[str, str] = {}
-    for key in keys:
-        revision = _single_pinned_action_revision(
-            texts[key],
-            action,
-            path=root / REQUIRED_FILES[key],
-            violations=violations,
-        )
-        if revision is not None:
-            revisions[key] = revision
-
-    if len(set(revisions.values())) > 1:
-        rendered = ", ".join(
-            f"{REQUIRED_FILES[key]}@{revision}"
-            for key, revision in revisions.items()
-        )
-        violations.append(
-            f"{root / '.github/workflows'}: {action} revisions must match "
-            f"across workflows: {rendered}"
-        )
-    return revisions
 
 
 def _check_setup_uv_cache_pruning(
@@ -259,63 +230,6 @@ def _yaml_mapping_block(text: str, key: str) -> str | None:
     )
     end = match.end() + next_entry.start() if next_entry is not None else len(text)
     return text[match.start() : end]
-
-
-def _yaml_list_item_block(text: str, key: str, value: str) -> str | None:
-    """Return a YAML list item and its nested block, selected by a scalar."""
-    match = re.search(
-        rf"^(?P<indent>[ \t]*)-\s+{re.escape(key)}:\s*[\"']?"
-        rf"{re.escape(value)}[\"']?\s*(?:#[^\n]*)?$",
-        text,
-        re.MULTILINE,
-    )
-    if match is None:
-        return None
-
-    indent = match.group("indent")
-    next_item = re.search(
-        rf"^{re.escape(indent)}-\s+\S",
-        text[match.end() :],
-        re.MULTILINE,
-    )
-    end = match.end() + next_item.start() if next_item is not None else len(text)
-    return text[match.start() : end]
-
-
-def _yaml_string_list_contains(text: str, key: str, value: str) -> bool:
-    """Return whether an inline or block-style YAML string list contains a value."""
-    inline = re.search(
-        rf"^\s*{re.escape(key)}:\s*\[(?P<items>[^\]]*)\]\s*(?:#[^\n]*)?$",
-        text,
-        re.MULTILINE,
-    )
-    if inline is not None:
-        items = [
-            item.strip().strip("\"'")
-            for item in inline.group("items").split(",")
-        ]
-        return value in items
-
-    block = re.search(
-        rf"^(?P<indent>[ \t]*){re.escape(key)}:\s*(?:#[^\n]*)?$",
-        text,
-        re.MULTILINE,
-    )
-    if block is None:
-        return False
-
-    indent = block.group("indent")
-    next_key = re.search(
-        rf"^{re.escape(indent)}\S[^:\n]*:\s*(?:#[^\n]*)?$",
-        text[block.end() :],
-        re.MULTILINE,
-    )
-    end = block.end() + next_key.start() if next_key is not None else len(text)
-    for line in text[block.end() : end].splitlines():
-        item = re.match(r"^\s+-\s*(?P<value>[^#]+?)\s*(?:#.*)?$", line)
-        if item is not None and item.group("value").strip().strip("\"'") == value:
-            return True
-    return False
 
 
 def _check_lightweight_uv_cache_permissions(
@@ -623,17 +537,15 @@ def _check_ci(
         label="full-ci output dot expression",
         violations=violations,
     )
-    # ci.yml honors full-ci ONE-SHOT (only at the `labeled` event). The
-    # persistent `contains(...labels...'full-ci')` re-check belongs to
-    # codeql.yml alone; if it appears here, someone made the cost-gated full
-    # matrix persistent-on-label — a deliberate cadence change that must
-    # update this contract, not slip in silently. (Pairs with the codeql
-    # positive anchor above.)
+    # ci.yml honors full-ci ONE-SHOT (only at the `labeled` event). A
+    # persistent `contains(...labels...'full-ci')` re-check here would make
+    # the cost-gated full matrix persistent-on-label — a deliberate cadence
+    # change that must update this contract, not slip in silently.
     _require_not_contains(
         text,
         "contains(github.event.pull_request.labels.*.name, 'full-ci')",
         path=path,
-        label="persistent full-ci re-check (belongs only in codeql.yml)",
+        label="persistent full-ci re-check (ci.yml honors full-ci one-shot)",
         violations=violations,
     )
 
@@ -832,43 +744,19 @@ def _check_pyproject(path: Path, text: str, violations: list[str]) -> None:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
 
-def _check_codeql(path: Path, text: str, violations: list[str]) -> None:
-    for label, needle in [
-        (
-            "required-context pull request events",
-            "types: [opened, synchronize, reopened, ready_for_review, labeled]",
-        ),
-        ("concurrency", "concurrency:"),
-        ("synchronize trigger", "github.event.action == 'synchronize'"),
-        ("full-ci label trigger", "github.event.label.name == 'full-ci'"),
-        # CodeQL honors full-ci PERSISTENTLY: the synchronize arm re-reads the
-        # label set on every push (contains(...labels...)), unlike the Socket
-        # job in ci.yml which is one-shot at the `labeled` event. This anchor
-        # pins that intentional asymmetry so a "unify to one-shot" edit (which
-        # would cut security coverage) breaks the contract instead.
-        (
-            "persistent full-ci re-check on synchronize",
-            "contains(github.event.pull_request.labels.*.name, 'full-ci')",
-        ),
-    ]:
-        _require_contains(text, needle, path=path, label=label, violations=violations)
-
-    revisions: dict[str, list[str]] = {"init": [], "analyze": []}
-    for action, revision in _CODEQL_ACTION_PATTERN.findall(text):
-        revisions[action].append(revision)
-
-    for action, action_revisions in revisions.items():
-        if len(action_revisions) != 1:
+def _check_no_advanced_codeql(root: Path, violations: list[str]) -> None:
+    # CodeQL runs through GitHub default setup (the organization security
+    # configuration). Default setup rejects advanced-setup SARIF uploads, so a
+    # workflow that calls github/codeql-action fails instead of scanning.
+    workflows = root / ".github/workflows"
+    for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
+        text, error = _read(path)
+        if error is not None:
+            violations.append(error)
+        elif text is not None and _ADVANCED_CODEQL_PATTERN.search(text):
             violations.append(
-                f"{path}: expected exactly one pinned github/codeql-action/{action} "
-                f"step, found {len(action_revisions)}"
-            )
-
-    if all(len(action_revisions) == 1 for action_revisions in revisions.values()):
-        if revisions["init"][0] != revisions["analyze"][0]:
-            violations.append(
-                f"{path}: CodeQL init/analyze revisions must match: "
-                f"init@{revisions['init'][0]} != analyze@{revisions['analyze'][0]}"
+                f"{path}: advanced CodeQL workflow step found; code scanning "
+                "uses GitHub default setup, which rejects advanced uploads"
             )
 
 
@@ -913,38 +801,6 @@ def _check_dependabot(path: Path, text: str, violations: list[str]) -> None:
         label="GitHub Actions PR approval",
         violations=violations,
     )
-
-
-def _check_dependabot_config(
-    path: Path,
-    text: str,
-    violations: list[str],
-) -> None:
-    github_actions = _yaml_list_item_block(
-        text,
-        "package-ecosystem",
-        "github-actions",
-    )
-    if github_actions is None:
-        violations.append(f"{path}: cannot inspect github-actions update block")
-        return
-
-    groups = _yaml_mapping_block(github_actions, "groups")
-    if groups is None:
-        violations.append(f"{path}: missing GitHub Actions dependency groups")
-        return
-
-    codeql = _yaml_mapping_block(groups, "codeql")
-    if codeql is None:
-        violations.append(f"{path}: missing CodeQL dependency group")
-        return
-
-    if not _yaml_string_list_contains(
-        codeql,
-        "patterns",
-        "github/codeql-action/*",
-    ):
-        violations.append(f"{path}: missing CodeQL action family pattern")
 
 
 def _check_classifier(path: Path, text: str, violations: list[str]) -> None:
@@ -1046,27 +902,21 @@ def check(root: Path) -> tuple[int, list[str]]:
         return 2, errors
 
     violations: list[str] = []
-    checkout_revisions = _shared_pinned_action_revisions(
-        root,
-        texts,
+    checkout_revision = _single_pinned_action_revision(
+        texts["ci"],
         "actions/checkout",
-        ("ci", "codeql"),
+        path=root / REQUIRED_FILES["ci"],
         violations=violations,
     )
     _check_ci(
         root / REQUIRED_FILES["ci"],
         texts["ci"],
         violations,
-        checkout_revision=checkout_revisions.get("ci"),
+        checkout_revision=checkout_revision,
     )
-    _check_codeql(root / REQUIRED_FILES["codeql"], texts["codeql"], violations)
+    _check_no_advanced_codeql(root, violations)
     _check_socket(root / REQUIRED_FILES["ci"], texts["ci"], violations)
     _check_dependabot(root / REQUIRED_FILES["dependabot"], texts["dependabot"], violations)
-    _check_dependabot_config(
-        root / REQUIRED_FILES["dependabot_config"],
-        texts["dependabot_config"],
-        violations,
-    )
     _check_pyproject(root / REQUIRED_FILES["pyproject"], texts["pyproject"], violations)
     _check_precommit(root / REQUIRED_FILES["precommit"], texts["precommit"], violations)
     _check_classifier(root / REQUIRED_FILES["classifier"], texts["classifier"], violations)

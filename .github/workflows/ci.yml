@@ -187,8 +187,7 @@ jobs:
               # `synchronize` does NOT re-read the label set, so a flagged PR
               # that pushes again drops back to the quick lane unless
               # auto-merge is armed or dependency/workflow files changed. This
-              # is deliberate (the full matrix is cost-gated) and asymmetric
-              # with codeql.yml's persistent re-check — the split is pinned in
+              # is deliberate (the full matrix is cost-gated) and pinned in
               # tools/check_ci_review_contract.py.
               labeled)
                 if [ "$PR_LABEL" = "full-ci" ] || [ "$PR_AUTO_MERGE" = "true" ]; then

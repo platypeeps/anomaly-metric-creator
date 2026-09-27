@@ -86,7 +86,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       SKILL.md
   workflows/
     ci.yml
-    codeql.yml
     dependabot-auto-merge.yml
     sd-review-route.yml
   copilot-instructions.md

@@ -231,25 +231,6 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
         """,
     )
     _write(
-        root / ".github/workflows/codeql.yml",
-        """
-        on:
-          pull_request:
-            types: [opened, synchronize, reopened, ready_for_review, labeled]
-        concurrency:
-          group: codeql-${{ github.ref }}
-        jobs:
-          analyze:
-            if: (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'full-ci')) || github.event.label.name == 'full-ci'
-            steps:
-              - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-              - name: Initialize CodeQL
-                uses: github/codeql-action/init@1111111111111111111111111111111111111111
-              - name: Perform CodeQL Analysis
-                uses: github/codeql-action/analyze@1111111111111111111111111111111111111111
-        """,
-    )
-    _write(
         root / ".github/workflows/dependabot-auto-merge.yml",
         """
         on:
@@ -260,20 +241,6 @@ def _write_minimal_contract(root: Path, *, ci_extra: str = "") -> None:
             steps:
               - if: (steps.meta.outputs.update-type == 'version-update:semver-patch') && !contains(steps.meta.outputs.dependency-names, 'astral-sh/ruff-pre-commit')
                 run: gh pr merge --auto --squash "$PR_URL"
-        """,
-    )
-    _write(
-        root / ".github/dependabot.yml",
-        """
-        version: 2
-        updates:
-          - package-ecosystem: "github-actions"
-            directory: "/"
-            schedule:
-              interval: "weekly"
-            groups:
-              codeql:
-                patterns: ["github/codeql-action/*"]
         """,
     )
     _write(
@@ -403,15 +370,6 @@ def test_ci_action_revision_can_advance_when_all_uses_match(
         ),
         encoding="utf-8",
     )
-    if action == "actions/checkout":
-        workflow = tmp_path / ".github/workflows/codeql.yml"
-        workflow.write_text(
-            workflow.read_text(encoding="utf-8").replace(
-                f"{action}@{old_revision}",
-                f"{action}@{new_revision}",
-            ),
-            encoding="utf-8",
-        )
 
     result = _run(str(tmp_path))
 
@@ -484,23 +442,6 @@ def test_ci_action_revisions_must_use_full_commit_shas(
     assert f"every {action} step must use a full 40-character commit SHA" in result.stderr
 
 
-def test_checkout_revisions_must_match_across_workflows(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    peer = tmp_path / ".github/workflows/codeql.yml"
-    peer.write_text(
-        peer.read_text(encoding="utf-8").replace(
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
-            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "actions/checkout revisions must match across workflows" in result.stderr
-
-
 def test_setup_uv_cache_requires_explicit_pruning(tmp_path: Path) -> None:
     _write_minimal_contract(tmp_path)
     ci = tmp_path / ".github/workflows/ci.yml"
@@ -513,50 +454,6 @@ def test_setup_uv_cache_requires_explicit_pruning(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "setup-uv cache-enabled step must set prune-cache: true" in result.stderr
-
-
-def test_codeql_dependabot_group_is_required(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    dependabot = tmp_path / ".github/dependabot.yml"
-    dependabot.write_text(
-        dependabot.read_text(encoding="utf-8").replace(
-            'patterns: ["github/codeql-action/*"]',
-            'patterns: ["actions/checkout"]',
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "CodeQL action family pattern" in result.stderr
-
-
-@pytest.mark.parametrize(
-    "replacement",
-    [
-        "patterns: ['github/codeql-action/*']",
-        'patterns: ["actions/checkout", "github/codeql-action/*"]',
-        "patterns:\n          - 'github/codeql-action/*'",
-    ],
-)
-def test_codeql_dependabot_group_accepts_equivalent_yaml(
-    tmp_path: Path,
-    replacement: str,
-) -> None:
-    _write_minimal_contract(tmp_path)
-    dependabot = tmp_path / ".github/dependabot.yml"
-    dependabot.write_text(
-        dependabot.read_text(encoding="utf-8").replace(
-            'patterns: ["github/codeql-action/*"]',
-            replacement,
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 0, result.stderr
 
 
 def test_missing_ci_lane_fails(tmp_path: Path) -> None:
@@ -940,71 +837,41 @@ def test_removing_locked_sync_flag_fails(tmp_path: Path) -> None:
     assert "locked dependency sync" in result.stderr
 
 
-def test_missing_codeql_synchronize_trigger_fails(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("filename", "step"),
+    [
+        ("codeql.yml", "- uses: github/codeql-action/init@1111111111111111111111111111111111111111"),
+        ("scan.yaml", "- uses: github/codeql-action/upload-sarif@v4"),
+    ],
+)
+def test_advanced_codeql_workflow_is_forbidden(
+    tmp_path: Path,
+    filename: str,
+    step: str,
+) -> None:
+    # Code scanning uses GitHub default setup, which rejects advanced-setup
+    # uploads, so any github/codeql-action step in a workflow is drift.
     _write_minimal_contract(tmp_path)
-    codeql = tmp_path / ".github/workflows/codeql.yml"
-    codeql.write_text(
-        codeql.read_text(encoding="utf-8").replace(
-            "types: [opened, synchronize, reopened, ready_for_review, labeled]",
-            "types: [opened, reopened, ready_for_review, labeled]",
-        ).replace(
-            "(github.event.action == 'synchronize' && "
-            "contains(github.event.pull_request.labels.*.name, 'full-ci')) || ",
-            "",
-        ),
-        encoding="utf-8",
+    _write(
+        tmp_path / ".github/workflows" / filename,
+        f"""
+        jobs:
+          analyze:
+            steps:
+              {step}
+        """,
     )
 
     result = _run(str(tmp_path))
 
     assert result.returncode == 1
-    assert "synchronize trigger" in result.stderr
-
-
-def test_missing_codeql_persistent_full_ci_recheck_fails(tmp_path: Path) -> None:
-    # Dropping the persistent contains(...labels...) re-check (leaving only a
-    # plain synchronize) is the "unify CodeQL to one-shot" regression the
-    # anchor guards against — it would silently cut security-scan coverage on
-    # flagged PRs. The plain-synchronize replacement keeps the synchronize
-    # trigger anchor satisfied so only the persistence anchor fires.
-    _write_minimal_contract(tmp_path)
-    codeql = tmp_path / ".github/workflows/codeql.yml"
-    codeql.write_text(
-        codeql.read_text(encoding="utf-8").replace(
-            "(github.event.action == 'synchronize' && "
-            "contains(github.event.pull_request.labels.*.name, 'full-ci'))",
-            "github.event.action == 'synchronize'",
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "persistent full-ci re-check on synchronize" in result.stderr
-
-
-def test_codeql_init_and_analyze_revisions_must_match(tmp_path: Path) -> None:
-    _write_minimal_contract(tmp_path)
-    codeql = tmp_path / ".github/workflows/codeql.yml"
-    codeql.write_text(
-        codeql.read_text(encoding="utf-8").replace(
-            "github/codeql-action/init@1111111111111111111111111111111111111111",
-            "github/codeql-action/init@2222222222222222222222222222222222222222",
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(str(tmp_path))
-
-    assert result.returncode == 1
-    assert "CodeQL init/analyze revisions must match" in result.stderr
+    assert f"{filename}: advanced CodeQL workflow step found" in result.stderr
 
 
 def test_ci_persistent_full_ci_recheck_is_forbidden(tmp_path: Path) -> None:
-    # The inverse: ci.yml must NOT gain codeql's persistent label re-check.
-    # Making the cost-gated full matrix persistent-on-label is a cadence change
-    # that must update the contract, not slip in silently.
+    # ci.yml honors full-ci one-shot. Making the cost-gated full matrix
+    # persistent-on-label is a cadence change that must update the contract,
+    # not slip in silently.
     _write_minimal_contract(
         tmp_path,
         ci_extra=(
@@ -1015,7 +882,7 @@ def test_ci_persistent_full_ci_recheck_is_forbidden(tmp_path: Path) -> None:
     result = _run(str(tmp_path))
 
     assert result.returncode == 1
-    assert "persistent full-ci re-check (belongs only in codeql.yml)" in result.stderr
+    assert "persistent full-ci re-check (ci.yml honors full-ci one-shot)" in result.stderr
 
 
 def test_ci_full_ci_output_requires_bracket_expression(tmp_path: Path) -> None:

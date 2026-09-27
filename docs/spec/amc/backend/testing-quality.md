@@ -357,19 +357,13 @@ there is no older declared floor and no multi-version lane. Sources:
 `tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
 `tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
-The `full-ci` label's lifetime is deliberately **asymmetric** between the two
-workflows, and unifying them is a regression in either direction. The
-application and Socket jobs in `ci.yml` honor it **one-shot** — only at the
-`labeled` event, so a later plain `synchronize` drops the cost-gated full
-matrix/scan back to the quick lane unless auto-merge is armed or
-dependency/workflow files changed. `codeql.yml` honors it **persistently**: its
-`synchronize` arm re-checks the label set
-(`contains(github.event.pull_request.labels.*.name, 'full-ci')`) on every push,
-so security analysis runs for the life of a flagged PR. Do not make CodeQL
-one-shot; that cuts security coverage. `tools/check_ci_review_contract.py` pins
-both semantics — a positive anchor on codeql's persistent re-check and a
-`_require_not_contains` guard keeping that form out of `ci.yml`. Sources:
-`.github/workflows/ci.yml`; `.github/workflows/codeql.yml`;
+The application and Socket jobs in `ci.yml` honor the `full-ci` label
+**one-shot** — only at the `labeled` event, so a later plain `synchronize`
+drops the cost-gated full matrix/scan back to the quick lane unless auto-merge
+is armed or dependency/workflow files changed. `tools/check_ci_review_contract.py`
+pins this with a `_require_not_contains` guard that keeps the persistent
+re-check form (`contains(github.event.pull_request.labels.*.name, 'full-ci')`)
+out of `ci.yml`. Sources: `.github/workflows/ci.yml`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
 
 The aggregate `test` job is guarded with `if: ${{ !cancelled() }}`, never
@@ -454,17 +448,16 @@ Sources: `.github/workflows/ci.yml`; `tools/check_mypy_gate.py`;
 
 ### 1. Scope / Trigger
 
-- Trigger: any update to `actions/checkout`, `astral-sh/setup-uv`, or either
-  `github/codeql-action` step in the repository workflows.
-- This is an infrastructure contract spanning workflow execution, Dependabot
-  grouping, cache behavior, and the local CI review guard.
+- Trigger: any update to `actions/checkout` or `astral-sh/setup-uv` in the
+  repository workflows.
+- This is an infrastructure contract spanning workflow execution, cache
+  behavior, and the local CI review guard.
 
 ### 2. Signatures
 
 - Workflow action reference: `uses: <owner>/<action>@<40-lowercase-hex-SHA>`.
 - Uniform-pin guard: `_single_pinned_action_revision(text, action, *, path,
   violations) -> str | None`.
-- CodeQL Dependabot group: `patterns: ["github/codeql-action/*"]`.
 
 ### 3. Contracts
 
@@ -475,9 +468,9 @@ Sources: `.github/workflows/ci.yml`; `tools/check_mypy_gate.py`;
 - The coverage-combine job must use those same derived checkout and setup-uv
   revisions. A partial update is invalid even when each individual reference
   is pinned.
-- CodeQL `init` and `analyze` must share one full commit SHA, and Dependabot
-  must group `github/codeql-action/*` so its generated update is mergeable as
-  one unit.
+- No workflow may call `github/codeql-action`. Code scanning runs through
+  GitHub's CodeQL default setup (the organization security configuration),
+  which rejects advanced-setup uploads.
 - setup-uv v9 changes the `prune-cache` default to `false`. Every CI step that
   sets `enable-cache: true` must also set `prune-cache: true` to preserve the
   repository's prior cache-size behavior explicitly.
@@ -489,25 +482,24 @@ Sources: `.github/workflows/ci.yml`; `tools/check_mypy_gate.py`;
 | Action uses a tag or short SHA | CI review contract fails with the offending revision |
 | Same action has two full SHAs in `ci.yml` | CI review contract fails with both revisions |
 | Coverage combine uses a different checkout or setup-uv SHA | CI review contract fails before remote CI |
-| CodeQL init/analyze differ | CI review contract fails; do not merge either half |
+| A workflow calls `github/codeql-action` | CI review contract fails; default setup owns code scanning |
 | setup-uv cache enabled without explicit pruning | Treat as an unreviewed cache-cost behavior change |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: all checkout uses move to one new full SHA, all setup-uv uses move to
-  one new full SHA, cached setup-uv steps retain `prune-cache: true`, and both
-  CodeQL actions move together.
+  one new full SHA, and cached setup-uv steps retain `prune-cache: true`.
 - Base: an unrelated workflow edit leaves all existing action revisions
   unchanged and uniform.
-- Bad: one Dependabot PR updates CodeQL `init` while `analyze` remains on the
-  previous SHA, or the contract checker is edited to bless a specific current
-  dependency SHA.
+- Bad: one Dependabot PR updates one `actions/checkout` use while another
+  remains on the previous SHA, or the contract checker is edited to bless a
+  specific current dependency SHA.
 
 ### 6. Tests Required
 
 - `tests/test_ci_review_contract.py` must prove a complete action SHA advance
-  passes, mixed revisions fail, non-SHA references fail, and CodeQL
-  init/analyze drift fails.
+  passes, mixed revisions fail, non-SHA references fail, and a
+  `github/codeql-action` workflow step fails.
 - `test_real_repo_contract_is_clean` must run against the edited live tree.
 - Workflow dependency changes require the repository full gate and the remote
   full CI lane before merge.
@@ -535,7 +527,6 @@ Correct:
 The correct form preserves supply-chain pinning and behavior while allowing a
 complete future dependency update to advance without editing the guard's
 source. Sources: `.github/workflows/ci.yml`;
-`.github/workflows/codeql.yml`; `.github/dependabot.yml`;
 `tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`;
 `https://github.com/astral-sh/setup-uv/releases/tag/v9.0.0`.
 
@@ -658,22 +649,15 @@ Sources: `.github/workflows/ci.yml`; `.pre-commit-config.yaml`;
 `tests/test_ci_review_contract.py`;
 `tests/test_python_syntax_lint.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
-CodeQL analyzes opened/reopened/ready_for_review PRs and `full-ci`-labeled
-updates; plain `synchronize` events keep the trigger but report a skipped
-analysis job, and merged code is always analyzed by the push-to-main run.
-CodeQL is advisory on PRs: branch protection requires only the `CI Result`
-context, which aggregates the application and Socket jobs (a skipped analysis
-produces no code-scanning summary
-check, so `CodeQL` must not be a required context while this gating is in
-place). Keep the `synchronize` trigger itself: once `full-ci` is applied,
-later pushes to the PR re-analyze automatically.
-Pin the CodeQL `init` and `analyze` steps to the same exact 40-character action
-revision. A partial dependency update can otherwise initialize one action
-version and analyze with another, failing before queries run; the CI contract
-guard and its mutation test must reject that drift locally.
+Code scanning runs through GitHub's CodeQL default setup, enabled by the
+organization's "GitHub recommended" security configuration; the repository
+carries no CodeQL workflow. Default setup rejects advanced-setup uploads, so
+the CI contract guard fails any workflow step that calls
+`github/codeql-action`. Branch protection requires only the `CI Result`
+context, which aggregates the application and Socket jobs.
 Socket should keep a visible PR check but fast-skip unless
 dependency/security-relevant files changed or full CI was requested. Sources:
-`.github/workflows/codeql.yml`; `.github/workflows/ci.yml`;
+`.github/workflows/ci.yml`;
 `scripts/classify-ci-changes.sh`; `tools/check_ci_review_contract.py`;
 `docs/DEVELOPMENT_CYCLE.md`.
 
