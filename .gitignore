@@ -2,6 +2,9 @@
 .env
 .env.*
 .env-*
+# Templates carry change-me placeholders only; real values stay in the ignored files.
+!.env.example
+!.env.*.example
 .vscode
 .idea
 __pycache__

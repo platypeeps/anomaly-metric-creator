@@ -7,6 +7,10 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- Added a committed `.env.example` listing every `MEZMO_OTEL_*` variable the
+  README documents, with `change-me` placeholders. `.gitignore` still ignores
+  `.env` and `.env.*` but now tracks `.env.example` and `.env.*.example`.
+  No CLI, HTTP, or output change.
 - Added `.github/sd-review.json` with `"severity_floor": "high"`: only
   high-severity `sd-review` findings now block a merge. Review process only:
   no CLI, HTTP, or output change. The backend spec index now also links its

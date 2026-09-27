@@ -703,6 +703,7 @@ tools/
   check_work_item_placeholders.py
   check_workflow_pip.py
   pr_comment.sh
+.env.example
 .gitignore
 .pre-commit-config.yaml
 AGENTS.md
