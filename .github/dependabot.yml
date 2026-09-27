@@ -50,11 +50,6 @@ updates:
       timezone: "America/Denver"
     commit-message:
       prefix: "ci(deps)"
-    groups:
-      # CodeQL's init and analyze actions must use the same revision. Group
-      # them so Dependabot never opens two individually unmergeable PRs.
-      codeql:
-        patterns: ["github/codeql-action/*"]
     ignore:
       # The sd-ai-command-pack pin is set by hand, not by Dependabot. The action
       # runs the pack's own code out of the pinned checkout, so a bump is a
