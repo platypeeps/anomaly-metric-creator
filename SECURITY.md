@@ -139,6 +139,10 @@ remote binds: a page loaded in the operator's browser can reach a `127.0.0.1`
 bind just as easily, which is exactly the workshop default. The escapes are an
 explicit origin value or adding a token; `--allow-remote-without-auth` does not
 unlock it, because that flag governs the bind host, not the browser origin.
+An origin value that contains a control character such as CR or LF is refused
+at startup, and the response header always carries the configured value rather
+than the request's `Origin` bytes, so the CORS path cannot split a response
+header.
 
 ### CSV exports and spreadsheet formulas
 

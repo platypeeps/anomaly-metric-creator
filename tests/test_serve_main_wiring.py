@@ -440,3 +440,156 @@ def test_start_test_server_refuses_wildcard_cors_without_auth():
             SimpleNamespace(),
             security=server.ServerSecurityConfig(cors_allow_origin="*"),
         )
+
+
+# --- sd:1865: a CORS origin carrying control characters is refused -------------
+
+# CR/LF would split the access-control-allow-origin response header the value is
+# written into; NUL, TAB and DEL have no place in an origin either. Surrounding
+# whitespace stays tolerated: the value is stripped before use.
+_CONTROL_CHAR_ORIGINS = [
+    "https://ops.example\r\nset-cookie: injected=1",
+    "https://ops.example\nx-injected: 1",
+    "https://ops.example\rx-injected: 1",
+    "https://ops.exa\x00mple",
+    "https://ops.exa\tmple",
+    "https://ops.exa\x7fmple",
+]
+_CONTROL_CHAR_IDS = ["crlf", "lf", "cr", "nul", "tab", "del"]
+
+
+@pytest.mark.parametrize("origin", _CONTROL_CHAR_ORIGINS, ids=_CONTROL_CHAR_IDS)
+def test_serve_main_refuses_cors_origin_with_control_characters(
+    amc, monkeypatch, tmp_path, capsys, origin
+):
+    def unreachable_build_state(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("validation must reject before state construction")
+
+    monkeypatch.setattr(server, "build_state", unreachable_build_state)
+
+    with pytest.raises(SystemExit):
+        server.serve_main(
+            [
+                "--no-generate",
+                "--port",
+                "0",
+                "--output-dir",
+                str(tmp_path),
+                "--auth-token",
+                "test-token",
+                "--cors-allow-origin",
+                origin,
+            ],
+            legacy_module=amc,
+        )
+    err = capsys.readouterr().err
+    assert "--cors-allow-origin" in err
+    assert "control character" in err
+    # Refuse by name only: the offending value is never echoed back.
+    assert "injected" not in err
+
+
+def test_serve_config_file_cors_origin_with_crlf_is_refused(
+    amc, monkeypatch, tmp_path
+):
+    """The gate sits after the --config merge, so config cannot smuggle CR/LF in."""
+    config = tmp_path / "serve.json"
+    config.write_text(
+        json.dumps(
+            {
+                "server": {
+                    "auth_token": "test-token",
+                    "cors_allow_origin": "https://ops.example\r\nx-injected: 1",
+                },
+                "generate": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def unreachable_build_state(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("validation must reject before state construction")
+
+    monkeypatch.setattr(server, "build_state", unreachable_build_state)
+
+    with pytest.raises(SystemExit):
+        server.serve_main(
+            [
+                "--no-generate",
+                "--port",
+                "0",
+                "--output-dir",
+                str(tmp_path),
+                "--config",
+                str(config),
+            ],
+            legacy_module=amc,
+        )
+
+
+def test_serve_main_allows_cors_origin_with_surrounding_whitespace(
+    amc, monkeypatch, tmp_path
+):
+    """A trailing newline is stripped before use, so it is not a refusal."""
+
+    def capture_build_state(*args, **kwargs):
+        raise _StopWiring
+
+    monkeypatch.setattr(server, "build_state", capture_build_state)
+
+    with pytest.raises(_StopWiring):
+        server.serve_main(
+            [
+                "--no-generate",
+                "--port",
+                "0",
+                "--output-dir",
+                str(tmp_path),
+                "--cors-allow-origin",
+                " https://ops.example\n",
+            ],
+            legacy_module=amc,
+        )
+
+
+@pytest.mark.parametrize("origin", _CONTROL_CHAR_ORIGINS, ids=_CONTROL_CHAR_IDS)
+def test_start_test_server_refuses_cors_origin_with_control_characters(origin):
+    with pytest.raises(ValueError, match="control character"):
+        server.start_test_server(
+            SimpleNamespace(),
+            security=server.ServerSecurityConfig(
+                auth_token="test-token", cors_allow_origin=origin
+            ),
+        )
+
+
+def _cors_headers_for(configured: str, request_origin: str) -> dict[str, str]:
+    handler_cls = server.make_handler(
+        SimpleNamespace(),
+        security=server.ServerSecurityConfig(
+            auth_token="test-token", cors_allow_origin=configured
+        ),
+    )
+    handler = handler_cls.__new__(handler_cls)
+    handler.headers = {"origin": request_origin}
+    return {
+        **handler._cors_response_headers(),
+        **handler._cors_preflight_headers(),
+    }
+
+
+@pytest.mark.parametrize("origin", _CONTROL_CHAR_ORIGINS, ids=_CONTROL_CHAR_IDS)
+def test_cors_headers_are_never_emitted_for_a_control_character_origin(origin):
+    """Defense in depth behind the startup gates: an embedder that builds the
+    handler directly still gets no CORS header carrying the unsafe value."""
+    assert _cors_headers_for(origin, origin) == {}
+
+
+def test_cors_allow_origin_header_carries_the_configured_value():
+    """The allowed origin is written from configuration, not reflected from
+    the request: the request only selects whether the header is sent."""
+    headers = _cors_headers_for("https://ops.example", " https://ops.example ")
+    assert headers["access-control-allow-origin"] == "https://ops.example"
+    assert "access-control-allow-origin" not in _cors_headers_for(
+        "https://ops.example", "https://evil.example"
+    )
