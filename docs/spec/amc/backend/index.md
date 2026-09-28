@@ -28,10 +28,10 @@ Before editing runtime code, tests, docs, CI, hooks, or platform adapters:
    `src/anomaly_metric_creator/server_traces.py`;
    `src/anomaly_metric_creator/server_ops.py`;
    `src/anomaly_metric_creator/server_debug_ui.py`.
-5. For tests, validators, deterministic output, CI, dependencies, or review
-   readiness, read [Testing and Quality](./testing-quality.md). Sources:
-   `README.md`; `pyproject.toml`;
-   `.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
+5. For tests, validators, deterministic output, the merge gate, dependencies,
+   or review readiness, read [Testing and Quality](./testing-quality.md).
+   Sources: `README.md`; `pyproject.toml`;
+   `.pre-commit-config.yaml`; `scripts/check.sh`;
    `tests/conftest.py`.
 6. For documentation, PR descriptions, GitHub/Copilot review guidance, or
    agent-platform files, read [Documentation and Review](./documentation-review.md).
@@ -108,10 +108,10 @@ git diff --check
 ```
 
 Also run a placeholder scan and Markdown link check over `docs/spec/` and
-any adapter docs touched. If executable code, hooks, package metadata, or CI
-workflow behavior changes, run the narrowest relevant test or lint command and
-explain anything skipped. Sources: `scripts/check-review-preflight.mjs`;
-`docs/spec/`; `.github/workflows/ci.yml`; `pyproject.toml`; `tests/`;
+any adapter docs touched. If executable code, hooks, package metadata, or
+merge-gate behavior changes, run the narrowest relevant test or lint command
+and explain anything skipped. Sources: `scripts/check-review-preflight.mjs`;
+`docs/spec/`; `scripts/check.sh`; `pyproject.toml`; `tests/`;
 `.pre-commit-config.yaml`.
 
 ## Language

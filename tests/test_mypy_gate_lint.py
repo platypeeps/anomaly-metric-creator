@@ -9,7 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "check_mypy_gate.py"
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+GATE_SCRIPT = REPO_ROOT / "scripts" / "check.sh"
 LOCAL_PREFLIGHT = REPO_ROOT / "scripts" / "check-review-preflight.mjs"
 
 
@@ -44,21 +44,21 @@ def test_list_mode_owns_the_expected_clean_module_set() -> None:
     assert all((REPO_ROOT / module).is_file() for module in modules)
 
 
-def test_ci_and_local_preflight_invoke_checker_without_inline_module_lists() -> None:
+def test_gate_and_local_preflight_invoke_checker_without_inline_module_lists() -> None:
     list_result = _run("--list")
     assert list_result.returncode == 0, list_result.stderr
     modules = list_result.stdout.splitlines()
-    workflow = WORKFLOW.read_text(encoding="utf-8")
+    gate = GATE_SCRIPT.read_text(encoding="utf-8")
     preflight = LOCAL_PREFLIGHT.read_text(encoding="utf-8")
 
-    workflow_step_marker = "      - name: Type-check gate (mypy, clean modules)"
-    assert workflow.count(workflow_step_marker) == 1
-    workflow_step_start = workflow.index(workflow_step_marker)
-    workflow_step_end = workflow.find(
-        "\n      - name:", workflow_step_start + len(workflow_step_marker)
+    gate_step_marker = 'step "Type-check gate (mypy, clean modules)"'
+    assert gate.count(gate_step_marker) == 1
+    gate_step_start = gate.index(gate_step_marker)
+    gate_step_end = gate.find(
+        "\nstep ", gate_step_start + len(gate_step_marker)
     )
-    assert workflow_step_end != -1
-    workflow_step = workflow[workflow_step_start:workflow_step_end]
+    assert gate_step_end != -1
+    gate_step = gate[gate_step_start:gate_step_end]
 
     preflight_marker = 'run("Clean-module mypy gate"'
     preflight_calls = [
@@ -66,9 +66,9 @@ def test_ci_and_local_preflight_invoke_checker_without_inline_module_lists() -> 
     ]
     assert len(preflight_calls) == 1
 
-    assert "python tools/check_mypy_gate.py" in workflow_step
+    assert "python tools/check_mypy_gate.py" in gate_step
     assert '["tools/check_mypy_gate.py"]' in preflight_calls[0]
-    for owner in (workflow_step, preflight_calls[0]):
+    for owner in (gate_step, preflight_calls[0]):
         assert not [module for module in modules if module in owner]
 
 

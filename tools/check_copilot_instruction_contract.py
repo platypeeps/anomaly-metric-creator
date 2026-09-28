@@ -73,7 +73,7 @@ COPILOT_REQUIRED_NEEDLES = [
     ("newer commit/test de-duplication", "newer commits or tests"),
     ("grouped sibling comments", "one grouped comment per"),
     ("top-level scope comment", "one top-level scope comment"),
-    ("CI review contract guard", "tools/check_ci_review_contract.py"),
+    ("local gate contract guard", "tools/check_local_gate_contract.py"),
     ("Copilot instruction contract guard", "tools/check_copilot_instruction_contract.py"),
     ("automation scope section", "Automation scope:"),
     ("CI review scope section", "CI/review scope:"),
@@ -81,7 +81,7 @@ COPILOT_REQUIRED_NEEDLES = [
     ("docs user-facing scope section", "Docs/user-facing scope:"),
     ("runtime server scope section", "Runtime/server scope:"),
     ("canonical CLI surface anchor", "canonical CLI surface"),
-    ("required branch-protection context name", "CI Result"),
+    ("required merge-gate check name", "sd/local-gate"),
 ]
 
 # Removed CLI flags that must never reappear in the Copilot instructions as
@@ -232,7 +232,7 @@ def _check_review_preflight_wiring(root: Path, text: str, violations: list[str])
     # dropped with the thin conversion: they read the pack's own full-check
     # script, which is no longer part of this repository.
     for label, needle in [
-        ("CI review contract guard", "tools/check_ci_review_contract.py"),
+        ("local gate contract guard", "tools/check_local_gate_contract.py"),
         ("Copilot instruction contract guard", "tools/check_copilot_instruction_contract.py"),
         ("Copilot instruction contract tests", "tests/test_copilot_instruction_contract.py"),
     ]:

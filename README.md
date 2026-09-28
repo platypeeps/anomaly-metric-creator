@@ -1,6 +1,5 @@
 # anomaly-metric-creator
 
-[![CI](https://github.com/platypeeps/anomaly-metric-creator/actions/workflows/ci.yml/badge.svg)](https://github.com/platypeeps/anomaly-metric-creator/actions/workflows/ci.yml)
 [![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
 ![License: Proprietary](https://img.shields.io/badge/license-proprietary-red.svg)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -634,9 +633,9 @@ payloads exposed through the Helm-shaped Secret API.
 Real `kubectl` and Helm 4 client compatibility is also available through the
 Kubernetes API facade:
 
-The compatibility facade is CI smoke-tested with kubectl v1.36.2 and Helm
-v4.2.0 while advertising Kubernetes v1.36.2. Those versions are pinned so a
-client or advertised-version bump is reviewed and validated as one change.
+The compatibility facade was smoke-tested with kubectl v1.36.2 and Helm
+v4.2.0 while advertising Kubernetes v1.36.2. A client or advertised-version
+bump is reviewed and validated as one change.
 
 ```bash
 curl -s http://127.0.0.1:8088/v1/kubeconfig > /tmp/amc.kubeconfig
@@ -1408,8 +1407,8 @@ this file-granular suite. Override when your host needs less memory:
 .venv/bin/pytest -n 2   # lower-memory parallel fallback
 ```
 
-CI splits heavy and light tests into concurrent jobs to isolate runner memory.
-Running those partitions sequentially is intentionally not the local speed
+`make check` runs heavy and light tests as separate partitions to collect
+coverage per partition. Running those partitions sequentially is intentionally not the local speed
 recommendation: on the 2026-07-20 checkout, the bare suite took 253.36s and the
 serial heavy partition alone took 345.01s.
 
@@ -1456,7 +1455,7 @@ Several focused checks run on every `git commit` via `.pre-commit-config.yaml`:
 - **`ruff` F841 (unused local variables).** Scopes unused-local enforcement to
   runtime code, helper tools, and Python hook adapters.
 - **Clean-module mypy gate (`tools/check_mypy_gate.py`).** Owns the canonical
-  19-module zero-error set used by both full CI and local review preflight.
+  zero-error module set used by both `make check` and local review preflight.
 - **Work-item placeholders (`tools/check_work_item_placeholders.py`).** Blocks
   unfinished template text such as `(Add details)` from committed work items
   under `docs/work/`.
@@ -1494,7 +1493,5 @@ any branch name matching `(?i)(^|\b)ver-\d+` — see
 [docs/spec/amc/backend/testing-quality.md](docs/spec/amc/backend/testing-quality.md)
 and [CLAUDE.md](CLAUDE.md) for the policy, anchors, and full invocation modes
 of `tools/check_branch_name.py`. The pre-push hook checks the current local
-branch only; CI independently checks the actual pull-request
-`github.head_ref`, closing refspec and detached-HEAD publication bypasses for
-PRs. For earlier local feedback on those edge cases, see the hand-rolled
+branch only; `make check` checks it again before merge. For earlier local feedback on those edge cases, see the hand-rolled
 `.git/hooks/pre-push` snippet in CLAUDE.md.

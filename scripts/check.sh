@@ -1,33 +1,27 @@
 #!/usr/bin/env bash
-# `make check`: every step `.github/workflows/ci.yml` runs toward the required
-# `CI Result`, on this machine, plus the local deterministic gate
-# (`pre-commit run --all-files` and `scripts/check-review-preflight.mjs`).
-# `sd-check` finds it through the Makefile; `sd-ship merge` runs it through the
-# command pack's local gate when this repository's `repo.ci` is `local`.
+# `make check`: the merge gate for this repository. `sd-check` finds it
+# through the Makefile; `sd-ship merge` runs it and posts `sd/local-gate`, the
+# one required check, because this repository's `repo.ci` is `local`. GitHub
+# Actions runs no workflow here.
 #
-# CI picks one lane from the changed paths. This runs the union: the `changes`
-# guards, `lightweight readiness`, and the full lane (`test heavy`,
-# `test light`, `coverage`). The quick lane's pytest list is a subset of the
-# full suite, so it adds nothing here.
+# The steps: branch name and repository guards, readiness checks, the heavy
+# and light test partitions with the coverage threshold, then
+# `pre-commit run --all-files` and `scripts/check-review-preflight.mjs`.
+# `tools/check_local_gate_contract.py` guards the named anchors below.
 #
 # Not run, and why:
-# - pinned real kubectl/Helm smokes: CI downloads linux-amd64 binaries by
-#   checksum; the two tests still collect here and skip without the opt-in.
-# - report-only mypy baseline: `continue-on-error` in CI, so it never gates;
-#   the clean-module mypy gate does run.
-# - Windows collection: advisory, outside `CI Result`, needs Windows.
-# - Socket scan: needs the SOCKET_SECURITY_API_KEY repository secret.
+# - real kubectl/Helm smokes: the two tests collect here and skip without
+#   `AMC_RUN_REAL_CLIENT_SMOKE=1` and the clients on PATH.
 #
 # The gate puts no virtualenv on PATH, so this builds `.venv-check` from
-# `uv.lock` (`uv sync --extra dev --locked`), as CI does. `.venv-check*/` is
-# gitignored. BASE is the ref the whitespace check diffs against.
+# `uv.lock` (`uv sync --extra dev --locked`). `.venv-check*/` is gitignored.
+# BASE is the ref the whitespace check diffs against.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
 PYTHON_VERSION=3.14
 BASE="${BASE:-origin/main}"
-# CI runs two workers per partition to fit a hosted runner's memory; locally
 # pyproject's `-n 4` is the measured throughput default.
 WORKERS="${CHECK_PYTEST_WORKERS:-4}"
 
@@ -37,8 +31,8 @@ PY=.venv-check/bin/python
 
 step() { printf '\n==> %s\n' "$1"; }
 
-# Command substitution throughout, never `done < <(git ...)`, for the reason
-# ci.yml gives: a git failure must abort instead of yielding an empty list.
+# Command substitution throughout, never `done < <(git ...)`: a git failure
+# must abort instead of yielding an empty list.
 tracked() {
   local listing
   listing=$(git ls-files "$@")
@@ -51,7 +45,7 @@ tracked() {
 step "Sync dependencies (dev extra, locked)"
 uv sync --extra dev --locked --python "$PYTHON_VERSION"
 
-# --- changes: branch name and lightweight repository guards ----------------
+# --- branch name and repository guards --------------------------------------
 
 step "Branch name"
 "$PY" tools/check_branch_name.py --current
@@ -69,9 +63,8 @@ if [ "${#files[@]}" -gt 0 ]; then
   "$PY" tools/check_task_criteria_commands.py "${files[@]}"
 fi
 "$PY" tools/check_repomix_map_freshness.py
-"$PY" tools/check_guard_ci_coverage.py
 
-# --- lightweight readiness -------------------------------------------------
+# --- readiness --------------------------------------------------------------
 
 step "Whitespace check against $BASE"
 base=$(git merge-base "$BASE" HEAD) || { echo "check: no merge base with $BASE; fetch it first" >&2; exit 1; }
@@ -83,24 +76,10 @@ for script in "${files[@]}"; do
   bash -n "$script"
 done
 
-step "Smoke CI classifier"
-smoke=$(mktemp -d)
-trap 'rm -rf "$smoke"' EXIT
-printf '%s\n' \
-  'docs/REVIEW_PATTERNS.md' \
-  '.github/instructions/anomaly-metric-creator.instructions.md' \
-  '.prism/rules.json' > "$smoke/changes.txt"
-bash scripts/classify-ci-changes.sh "$smoke/changes.txt" > "$smoke/classifier.out"
-grep -q '^lightweight_only=true$' "$smoke/classifier.out"
-grep -q '^app_required=false$' "$smoke/classifier.out"
-
 step "Syntax and artifact guards"
 tracked 'scripts/*.py' 'tools/*.py' 'tests/*.py' '.codex/hooks/*.py' '.github/copilot/hooks/*.py' '.gemini/hooks/*.py'
 [ "${#files[@]}" -gt 0 ] || { echo "No Python files matched." >&2; exit 1; }
 "$PY" tools/check_python_syntax.py "${files[@]}"
-tracked '.github/workflows/*.yml' '.github/workflows/*.yaml'
-[ "${#files[@]}" -gt 0 ] || { echo "No workflow files matched." >&2; exit 1; }
-"$PY" tools/check_workflow_pip.py "${files[@]}"
 listing=$(git ls-files docs/work)
 files=()
 while IFS= read -r path; do
@@ -109,10 +88,10 @@ done <<< "$listing"
 if [ "${#files[@]}" -gt 0 ]; then
   "$PY" tools/check_work_item_placeholders.py "${files[@]}"
 fi
-"$PY" tools/check_ci_review_contract.py
+"$PY" tools/check_local_gate_contract.py
 "$PY" tools/check_copilot_instruction_contract.py
 
-# --- full lane: test light, test heavy, coverage ---------------------------
+# --- tests: heavy, light, coverage -----------------------------------------
 
 step "Smoke installed console scripts"
 rm -rf .venv-check-smoke

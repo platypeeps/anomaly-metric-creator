@@ -20,11 +20,11 @@ function run(label, command, args) {
   }
 }
 
-run("CI/review cadence contract guard", python, ["tools/check_ci_review_contract.py"]);
+run("Local gate contract guard", python, ["tools/check_local_gate_contract.py"]);
 run("Copilot instruction contract guard", python, ["tools/check_copilot_instruction_contract.py"]);
 
 run("Clean-module mypy gate", python, ["tools/check_mypy_gate.py"]);
 
-// The contract mutation suite stays in CI; the real-repo guards above validate
-// the checkout directly:
+// The contract mutation suite runs in the pytest partitions of `make check`;
+// the real-repo guards above validate the checkout directly:
 // tests/test_copilot_instruction_contract.py

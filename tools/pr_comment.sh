@@ -27,8 +27,8 @@
 #      approval)
 #   2  argument / IO error, or a gate's structural failure
 #
-# This is operator tooling for local comment posting, not a CI step; keep it out
-# of the workflow-pip / CI-mirror lint scopes. It needs `gh` authenticated for
+# This is operator tooling for local comment posting, not a merge-gate step;
+# keep it out of `scripts/check.sh`. It needs `gh` authenticated for
 # the post (and for the approval gate's `--pr` head/comment lookups), exactly
 # like the raw chain it replaces.
 

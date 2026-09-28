@@ -156,7 +156,7 @@ environment variables set without `monkeypatch`), or xdist will distribute them
 to different workers and produce non-reproducible failures. Derive scenario
 coverage from `amc.SCENARIOS` rather than hard-coding slug lists. Full
 conventions — fixture reuse, streaming reads, resource cost, cross-platform
-guards, the CI partition contract — are in
+guards, the test partition contract — are in
 [testing-quality.md](docs/spec/amc/backend/testing-quality.md).
 
 ## Review readiness
@@ -187,13 +187,13 @@ default.
 .venv/bin/ruff check tests/
 git diff --check
 node scripts/check-review-preflight.mjs        # the local review gate
-make check                             # all of the above plus every CI Result step, in .venv-check
+make check                             # the merge gate: all of the above plus tests and coverage, in .venv-check
 ```
 
 Run the narrowest focused regression first, then affected suites, then broader
 checks when the blast radius warrants it. The local gate is the merge gate
 (`repo.ci=local`): `sd-ship merge` runs `make check` and posts `sd/local-gate`,
-the one required check. The CI workflows are disabled on purpose; do not
-re-enable them to get a missing check. See
-[testing-quality.md](docs/spec/amc/backend/testing-quality.md) for the lane
-classification, the heavy/light partition, and the coverage and mypy gates.
+the one required check. The repository has no GitHub Actions workflows; do not
+add or re-enable one to get a missing check. See
+[testing-quality.md](docs/spec/amc/backend/testing-quality.md) for the gate
+steps, the heavy/light partition, and the coverage and mypy gates.

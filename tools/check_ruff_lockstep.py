@@ -22,14 +22,10 @@ manifest change, which ``lockfile-only`` skips — while the ``pre-commit``
 ecosystem keeps advancing the ``rev``. Every ruff-pre-commit Dependabot
 PR is therefore drift by construction.
 
-This check runs in the CI quick and light lanes, so such a PR reports a red
-``CI Result``. Red blocks a merge only while branch protection requires
-``CI Result``; with protection off, #442 and #444 auto-merged red. The
-second half of the guard is therefore in
-``.github/workflows/dependabot-auto-merge.yml``: it never arms auto-merge
-for ``astral-sh/ruff-pre-commit``, and ``tools/check_ci_review_contract.py``
-fails if that exclusion is removed. A human pushes the matching ``ruff==``
-and ``uv.lock`` bump onto the Dependabot PR, then merges it.
+This check runs in ``scripts/check.sh``, so such a PR fails ``make check``
+and ``sd/local-gate``. Nothing auto-merges a Dependabot PR: a human pushes the
+matching ``ruff==`` and ``uv.lock`` bump onto it, then merges it through
+``sd-ship merge``.
 
 Usage::
 

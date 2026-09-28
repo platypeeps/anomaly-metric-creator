@@ -1,6 +1,5 @@
-# `make check` runs every step of `.github/workflows/ci.yml` that feeds the
-# required `CI Result`, plus the local pre-commit and review preflight gate.
-# `scripts/check.sh` holds the steps and says which CI steps it cannot run.
+# `make check` is the merge gate: `sd-ship merge` runs it and posts
+# `sd/local-gate`, the one required check. `scripts/check.sh` holds the steps.
 
 .PHONY: check
 

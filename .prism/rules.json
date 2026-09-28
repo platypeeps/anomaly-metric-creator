@@ -34,7 +34,7 @@
     },
     {
       "id": "amc-ci-review-economy",
-      "text": "For workflow or review-tooling changes, verify scripts/classify-ci-changes.sh, CI lane conditions, docs/DEVELOPMENT_CYCLE.md, and docs/spec/amc/backend/testing-quality.md stay in lockstep."
+      "text": "For merge-gate or review-tooling changes, verify scripts/check.sh, tools/check_local_gate_contract.py, docs/DEVELOPMENT_CYCLE.md, and docs/spec/amc/backend/testing-quality.md stay in lockstep."
     }
   ]
 }

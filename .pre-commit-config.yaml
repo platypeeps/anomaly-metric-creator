@@ -115,27 +115,8 @@ repos:
         stages: [pre-push]
         always_run: true
         pass_filenames: false
-      # Forbid bare or unpinned `pip install` in GitHub Actions workflows. After
-      # `actions/setup-python`, a bare `pip` can resolve to a different
-      # interpreter than the one just selected, so the install lands in the
-      # wrong environment; direct third-party installs must also use exact
-      # `==` pins so workflow tooling is reproducible. Use
-      # `python -m pip install PACKAGE==VERSION` (`uv pip install
-      # PACKAGE==VERSION` is also fine). PR #118 shipped a bare `pip install`
-      # in the former standalone Socket workflow; this catches the pattern
-      # structurally. Exempt a line
-      # with a trailing `# pip-lint: allow`. See the
-      # tools/check_workflow_pip.py module docstring.
-      - id: workflow-pip
-        name: forbid bare or unpinned 'pip install' in workflows
-        entry: python tools/check_workflow_pip.py
-        language: python
-        files: ^\.github/workflows/.*\.ya?ml$
-        pass_filenames: true
-      # The CI classifier decides whether remote Actions can take the
-      # lightweight path. Keep shell syntax failures local so a docs/tooling-only
-      # PR does not spend a runner just to discover a malformed script. Matched
-      # by shape rather than by roster.
+      # Keep shell syntax failures local and cheap. Matched by shape rather
+      # than by roster.
       - id: shell-syntax
         name: validate shell script syntax
         # `set -e` is load-bearing: without it the loop exits with the status
@@ -145,15 +126,15 @@ repos:
         language: system
         files: ^scripts/(.*\.sh|update_repomix)$
         pass_filenames: true
-      # Guard the named anchors that keep local full-check, CI lane selection,
-      # Socket cadence, and review docs in sync. This is intentionally
-      # text-based and stdlib-only so it can run in pre-commit without
-      # installing project dependencies.
-      - id: ci-review-contract
-        name: guard CI/review cadence contract
-        entry: python tools/check_ci_review_contract.py
+      # Guard the named anchors of the local merge gate (`make check` ->
+      # `scripts/check.sh` -> these hooks), and fail any `tools/check_*.py`
+      # lint that nothing runs. Text-based and stdlib-only so it runs in
+      # pre-commit without installing project dependencies.
+      - id: local-gate-contract
+        name: guard local merge-gate contract
+        entry: python tools/check_local_gate_contract.py
         language: python
-        files: ^(\.github/workflows/.*\.ya?ml|scripts/(classify-ci-changes|classify_ci_changes)\.sh|scripts/check-review-preflight\.mjs|tools/check_ci_review_contract\.py|docs/DEVELOPMENT_CYCLE\.md|\.pre-commit-config\.yaml|docs/spec/amc/backend/testing-quality\.md)$
+        files: ^(Makefile|scripts/.*|tools/.*|\.pre-commit-config\.yaml)$
         pass_filenames: false
       # Keep Copilot's mechanical review instructions in sync with docs/spec,
       # the PR template checklist, the rendered skill policy, and the local
@@ -200,17 +181,6 @@ repos:
         entry: python tools/check_repomix_map_freshness.py
         language: python
         always_run: true
-        pass_filenames: false
-      # Meta-guard over the lints above: CI picks a lane from the changed
-      # paths, and never runs pre-commit, so a lint whose watched files select
-      # a lane that runs neither its CI step nor its test job is enforced in
-      # appearance only. Reads the whole repository, so no filenames.
-      - id: guard-ci-coverage
-        name: guard CI lane coverage for repository lints
-        entry: python tools/check_guard_ci_coverage.py
-        language: python
-        additional_dependencies: [PyYAML]
-        files: ^(\.pre-commit-config\.yaml|\.github/workflows/ci\.yml|scripts/classify-ci-changes\.sh|tools/check_[a-z_0-9]+\.py|tests/test_[a-z_0-9]+\.py)$
         pass_filenames: false
       # Keep command-trace JSON import/export boundaries strict. PR #140's
       # trace review comments came from direct casts and silent filtering on

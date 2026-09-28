@@ -27,7 +27,7 @@ spec under `docs/spec/`. Sources: `docs/spec/amc/backend/index.md`.
 ## Quick start
 
 ```bash
-# Install (editable, with dev dependencies, from uv.lock as CI does)
+# Install (editable, with dev dependencies, from uv.lock as `make check` does)
 uv sync --extra dev --locked
 
 # Generate default output (50,000 rows at 60s interval)

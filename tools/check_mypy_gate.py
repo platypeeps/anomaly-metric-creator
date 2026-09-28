@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run mypy against the repository's canonical clean-module gate.
 
-The module list lives here so CI and local review preflight cannot drift. Add a
-module only after it reaches zero mypy errors; never remove one to hide a
-regression.
+The module list lives here so `scripts/check.sh` and the local review preflight
+cannot drift. Add a module only after it reaches zero mypy errors; never remove
+one to hide a regression.
 """
 
 from __future__ import annotations
