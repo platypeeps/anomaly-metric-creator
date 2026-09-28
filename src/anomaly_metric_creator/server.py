@@ -916,18 +916,20 @@ def make_handler(
 
         def _cors_response_headers(self) -> dict[str, str]:
             allowed_origin = security.cors_allow_origin.strip()
-            if not allowed_origin:
+            if not allowed_origin or _cors_origin_has_control_chars(allowed_origin):
                 return {}
             headers = {"vary": "Origin"}
             origin = self.headers.get("origin", "").strip()
             if allowed_origin == "*":
                 headers["access-control-allow-origin"] = "*"
             elif origin == allowed_origin:
-                headers["access-control-allow-origin"] = origin
+                # Write the configured value; the request only selects it.
+                headers["access-control-allow-origin"] = allowed_origin
             return headers
 
         def _cors_preflight_headers(self) -> dict[str, str]:
-            if not security.cors_allow_origin.strip():
+            allowed_origin = security.cors_allow_origin.strip()
+            if not allowed_origin or _cors_origin_has_control_chars(allowed_origin):
                 return {}
             return {
                 "access-control-allow-methods": CORS_ALLOW_METHODS,
@@ -1419,6 +1421,7 @@ from .server_config import (  # noqa: E402
     _SERVE_CONFIG_SERVER_KEYS as _SERVE_CONFIG_SERVER_KEYS,
     _config_error as _config_error,
     _config_mapping_to_argv as _config_mapping_to_argv,
+    _cors_origin_has_control_chars as _cors_origin_has_control_chars,
     _extract_serve_config_path as _extract_serve_config_path,
     _load_serve_config as _load_serve_config,
     _parse_serve_args as _parse_serve_args,
@@ -1592,6 +1595,8 @@ def serve_main(argv: list[str] | None = None, *, legacy_module: Any | None = Non
             "unauthenticated server; pass --auth-token or name an explicit "
             "origin instead of '*'"
         )
+    if _cors_origin_has_control_chars(serve_args.cors_allow_origin.strip()):
+        parser.error("--cors-allow-origin must not contain a control character such as CR or LF")
 
     args = legacy_module.parse_args(generate_argv)
     if not serve_args.no_generate:
@@ -1957,6 +1962,8 @@ def start_test_server(
             "cors_allow_origin '*' requires auth_token; name an explicit "
             "origin instead of '*'"
         )
+    if _cors_origin_has_control_chars(resolved.cors_allow_origin.strip()):
+        raise ValueError("cors_allow_origin must not contain a control character such as CR or LF")
     # Keep the state's background-arm sink in step with the handler's request
     # sink so tests that drive a failing regen/OTEL pass through this entry
     # point see the same _record_server_error routing serve_main wires up.

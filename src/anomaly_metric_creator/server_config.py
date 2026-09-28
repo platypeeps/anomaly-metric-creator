@@ -21,6 +21,7 @@ import argparse
 import contextlib
 import io
 import json
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable
 
@@ -47,6 +48,19 @@ _SERVE_CONFIG_SERVER_KEYS = {
     "continuous_generate",
     "continuous_generate_interval_seconds",
 }
+
+
+def _cors_origin_has_control_chars(origin: str) -> bool:
+    """True when a CORS origin carries a control character (C0, DEL or C1).
+
+    The configured origin is written into the ``access-control-allow-origin``
+    response header, and ``BaseHTTPRequestHandler.send_header`` does not reject
+    CR or LF, so such a value would split the header block. No valid origin
+    serialization contains a control character, so all of them are refused.
+    Callers pass the stripped value: surrounding whitespace is dropped before
+    use and is not a refusal.
+    """
+    return any(unicodedata.category(ch) == "Cc" for ch in origin)
 
 
 def _load_serve_config(path: Path) -> dict[str, Any]:

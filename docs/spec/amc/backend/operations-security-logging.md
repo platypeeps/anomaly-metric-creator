@@ -213,8 +213,22 @@ eval-hidden is a wall property of that endpoint, not of the counts. Sources:
 
 `--cors-allow-origin` is the only CORS enablement path. Preflight requests are
 answered without bearer auth, and normal responses include access-control
-headers only for the configured origin or `*`. Sources: `README.md`;
+headers only for the configured origin or `*`. The header carries the
+configured value, never the request's bytes: a matching `Origin` only selects
+whether it is sent. Sources: `README.md`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
+
+An origin that contains a control character (C0, DEL or C1, checked after
+stripping surrounding whitespace) is refused (sd:1865). CR or LF would split the
+response header block, and `BaseHTTPRequestHandler.send_header` does not reject
+them. `serve_main` calls `parser.error` after the `--config` merge, naming the
+flag but not the value; `start_test_server` raises `ValueError`; and the two
+CORS header builders emit nothing for such a value, so a handler built directly
+through `make_handler` cannot write it either. The predicate is
+`_cors_origin_has_control_chars` in `server_config.py`. Sources:
+`src/anomaly_metric_creator/server.py`;
+`src/anomaly_metric_creator/server_config.py`;
+`tests/test_serve_main_wiring.py`.
 
 A `*` origin requires `--auth-token`; `serve_main` calls `parser.error` on the
 combination and `start_test_server` raises `ValueError` for parity (A-019). The

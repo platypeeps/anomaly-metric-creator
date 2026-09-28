@@ -7,6 +7,12 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- `amc serve --cors-allow-origin` (and the `cors_allow_origin` config key) now
+  refuses a value that contains a control character such as CR or LF, naming
+  the flag but not the value; exit code `2`. Such a value would have split the
+  `access-control-allow-origin` response header. The header now always carries
+  the configured value rather than the request's `Origin` bytes. Surrounding
+  whitespace is still stripped and accepted.
 - Removed the advanced `.github/workflows/codeql.yml` workflow. Code scanning
   now runs through GitHub's CodeQL default setup, enabled by the
   organization's "GitHub recommended" security configuration; default setup
