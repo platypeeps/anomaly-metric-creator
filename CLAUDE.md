@@ -191,8 +191,9 @@ make check                             # all of the above plus every CI Result s
 ```
 
 Run the narrowest focused regression first, then affected suites, then broader
-checks when the blast radius warrants it. CI is the merge gate — the required
-branch-protection context is the aggregate `CI Result`; the local pre-commit
-hooks do not run there. See
+checks when the blast radius warrants it. The local gate is the merge gate
+(`repo.ci=local`): `sd-ship merge` runs `make check` and posts `sd/local-gate`,
+the one required check. The CI workflows are disabled on purpose; do not
+re-enable them to get a missing check. See
 [testing-quality.md](docs/spec/amc/backend/testing-quality.md) for the lane
 classification, the heavy/light partition, and the coverage and mypy gates.
