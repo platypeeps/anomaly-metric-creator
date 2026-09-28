@@ -187,6 +187,7 @@ default.
 .venv/bin/ruff check tests/
 git diff --check
 node scripts/check-review-preflight.mjs        # the local review gate
+make check                             # all of the above plus every CI Result step, in .venv-check
 ```
 
 Run the narrowest focused regression first, then affected suites, then broader
