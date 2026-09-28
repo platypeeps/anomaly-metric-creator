@@ -87,3 +87,6 @@ coverage.xml
 
 # understand-anything generated analysis cache (knowledge graph / fingerprints).
 .understand-anything/
+
+# `make check` environments (scripts/check.sh).
+.venv-check*/
