@@ -9,7 +9,7 @@ repos:
     # local `ruff check` and this hook resolve the same binary. Bump
     # both lines together. Dependabot bumps only this `rev` and never
     # auto-merges it; push the `ruff==` and `uv.lock` bump onto its PR.
-    rev: v0.16.8
+    rev: v0.16.9
     hooks:
       - id: ruff
         name: ruff F401 (tests/)
