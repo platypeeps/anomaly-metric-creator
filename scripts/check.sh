@@ -5,13 +5,20 @@
 # Actions runs no workflow here.
 #
 # The steps: branch name and repository guards, readiness checks, the heavy
-# and light test partitions with the coverage threshold, then
-# `pre-commit run --all-files` and `scripts/check-review-preflight.mjs`.
+# and light test partitions with the coverage threshold, the real kubectl and
+# Helm smokes, `pre-commit run --all-files`,
+# `scripts/check-review-preflight.mjs`, then the Socket dependency scan.
 # `tools/check_local_gate_contract.py` guards the named anchors below.
 #
-# Not run, and why:
-# - real kubectl/Helm smokes: the two tests collect here and skip without
-#   `AMC_RUN_REAL_CLIENT_SMOKE=1` and the clients on PATH.
+# Skipped with a notice, and why:
+# - real kubectl/Helm smokes: each test skips when its client is not on PATH.
+#   The gate tests the installed clients; it pins and downloads none.
+#
+# The Socket scan needs `SOCKET_SECURITY_API_KEY`; the gate fails without it,
+# as in the sibling repositories.
+#
+# Not run: mypy over the whole package (only the clean-module gate below) and
+# Windows test collection. The gate host is macOS.
 #
 # The gate puts no virtualenv on PATH, so this builds `.venv-check` from
 # `uv.lock` (`uv sync --extra dev --locked`). `.venv-check*/` is gitignored.
@@ -129,6 +136,12 @@ step "Coverage threshold"
 uv run --no-sync coverage combine
 uv run --no-sync coverage report --fail-under=85
 
+step "Real kubectl and Helm client smokes"
+# Each test skips itself when its client is missing; `-ra` prints the reason.
+AMC_RUN_REAL_CLIENT_SMOKE=1 uv run --no-sync pytest -n 0 \
+  tests/test_server.py::test_real_kubectl_binary_smoke_when_available \
+  tests/test_server.py::test_real_helm4_binary_smoke_when_available
+
 # --- local deterministic gate ----------------------------------------------
 
 step "pre-commit run --all-files"
@@ -136,5 +149,16 @@ uv run --no-sync pre-commit run --all-files
 
 step "Review preflight"
 REVIEW_PREFLIGHT_PYTHON="$PY" node scripts/check-review-preflight.mjs
+
+# --- dependency scan --------------------------------------------------------
+
+step "Socket dependency scan"
+# 2.1.0 fails against the current API (APIResourceNotFound); 2.4.10 matches
+# the sibling repositories' pinned image.
+if [ -z "${SOCKET_SECURITY_API_KEY:-}" ]; then
+  echo "check: SOCKET_SECURITY_API_KEY is unset; the Socket scan cannot run" >&2
+  exit 1
+fi
+uvx --from socketsecurity==2.4.10 socketcli --target-path "$PWD" --ignore-commit-files
 
 step "check passed"

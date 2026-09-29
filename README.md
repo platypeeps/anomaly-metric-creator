@@ -633,8 +633,9 @@ payloads exposed through the Helm-shaped Secret API.
 Real `kubectl` and Helm 4 client compatibility is also available through the
 Kubernetes API facade:
 
-The compatibility facade was smoke-tested with kubectl v1.36.2 and Helm
-v4.2.0 while advertising Kubernetes v1.36.2. A client or advertised-version
+The compatibility facade was smoke-tested with kubectl v1.37.1 and Helm
+v4.3.0 while advertising Kubernetes v1.36.2. `make check` reruns the smokes
+against the clients installed on the gate host. A client or advertised-version
 bump is reviewed and validated as one change.
 
 ```bash

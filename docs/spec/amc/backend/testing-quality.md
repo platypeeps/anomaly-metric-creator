@@ -295,7 +295,20 @@ runs these steps in order:
    the clean-module mypy gate.
 5. The heavy and light pytest partitions with coverage, then
    `coverage report --fail-under=85`.
-6. `pre-commit run --all-files` and `node scripts/check-review-preflight.mjs`.
+6. The real kubectl and Helm client smokes, with
+   `AMC_RUN_REAL_CLIENT_SMOKE=1`.
+7. `pre-commit run --all-files` and `node scripts/check-review-preflight.mjs`.
+8. The Socket dependency scan (`socketcli`, `socketsecurity==2.4.10` through
+   `uvx`). The gate fails when `SOCKET_SECURITY_API_KEY` is unset, so a merge
+   never lands unscanned.
+
+Two checks that GitHub Actions once ran are gone on purpose (2026-09-29):
+
+- The report-only mypy baseline over the whole package. The clean-module mypy
+  gate stays.
+- Windows test collection. The gate host is macOS, so nothing checks that the
+  suite collects on Windows. Keep platform-only imports guarded (see Test
+  hygiene) without a check to catch a miss.
 
 `tools/check_local_gate_contract.py` guards the named anchors of that chain in
 `Makefile`, `scripts/check.sh`, and `.pre-commit-config.yaml`. It also fails
@@ -323,8 +336,10 @@ The version policy (decided 2026-07-06) is latest-stable-CPython-only:
 `scripts/check.sh` and `requires-python` in `pyproject.toml` name the same
 version (currently 3.14) and move forward together. There is no older declared
 floor. The real kubectl and Helm client smokes are opt-in: they skip unless
-`AMC_RUN_REAL_CLIENT_SMOKE=1` is set and the clients are on `PATH`. Sources:
-`scripts/check.sh`; `pyproject.toml`; `tests/test_server.py`.
+`AMC_RUN_REAL_CLIENT_SMOKE=1` is set and the clients are on `PATH`.
+`make check` sets the variable in its own smoke step, so the gate tests the
+kubectl and Helm 4 clients installed on the gate host. It pins no client
+version. Sources: `scripts/check.sh`; `pyproject.toml`; `tests/test_server.py`.
 
 Coverage and mypy each gate in `make check`. mypy runs
 `mypy --follow-imports=silent` over the currently-clean modules and fails on
