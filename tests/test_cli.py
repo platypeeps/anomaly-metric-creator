@@ -21,6 +21,9 @@ from conftest import COMPONENTS, SCRIPT_PATH
 
 
 def _invoke(*args, cwd=None, env=None, timeout=None):
+    # Python 3.14 argparse colors help under an inherited FORCE_COLOR, and the
+    # escape codes split flag names; PYTHON_COLORS=0 takes precedence over it.
+    env = {**(os.environ if env is None else env), "PYTHON_COLORS": "0"}
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), *args],
         capture_output=True,

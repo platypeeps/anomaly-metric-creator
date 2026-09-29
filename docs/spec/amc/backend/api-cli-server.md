@@ -592,7 +592,7 @@ Sources: `README.md`;
 
 The facade advertises Kubernetes v1.36.2 from one server-ops constant. The
 opt-in real-client smokes (`AMC_RUN_REAL_CLIENT_SMOKE=1`) test it against the
-kubectl and Helm clients on `PATH`. Treat the advertised version, README
+kubectl and Helm clients on `PATH`; `make check` runs them. Treat the advertised version, README
 tested-version statement, and real-client smoke selectors as one update
 contract. Sources: `src/anomaly_metric_creator/server_ops.py`;
 `tests/test_server.py`; `README.md`; `docs/DEVELOPMENT_CYCLE.md`.

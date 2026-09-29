@@ -60,6 +60,8 @@ def test_copied_contract_without_lints_passes(tmp_path: Path) -> None:
         ("scripts/check.sh", "tools/check_mypy_gate.py"),
         ("scripts/check.sh", "coverage report --fail-under="),
         ("scripts/check.sh", 'bash -n "$script"'),
+        ("scripts/check.sh", "AMC_RUN_REAL_CLIENT_SMOKE=1"),
+        ("scripts/check.sh", "socketcli --target-path"),
         (".pre-commit-config.yaml", "id: local-gate-contract"),
         (".pre-commit-config.yaml", "bash -c 'set -e;"),
     ],

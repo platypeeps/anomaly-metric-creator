@@ -104,8 +104,9 @@ deleted on 2026-09-28. The merge gate is local: `sd-ship merge` runs
 `make check` and posts `sd/local-gate`, the one required check. `make check`
 runs `scripts/check.sh`, which builds `.venv-check` from `uv.lock` and runs
 every step: the repository guards, readiness checks, the heavy and light pytest
-partitions with the 85% coverage gate, `pre-commit run --all-files`, and the
-review preflight. The step list and rationale live in the script header and in
+partitions with the 85% coverage gate, the real kubectl and Helm smokes,
+`pre-commit run --all-files`, the review preflight, and the Socket dependency
+scan. The step list and rationale live in the script header and in
 [testing-quality.md](spec/amc/backend/testing-quality.md) § Local Review and
 Merge Gates.
 
@@ -118,21 +119,27 @@ hard-fail on drift without installing the full project environment.
 ### Pinned tool bumps
 
 The real kubectl and Helm client smokes are opt-in. They run only with
-`AMC_RUN_REAL_CLIENT_SMOKE=1` and the clients on `PATH`. When you move the
-tested client versions, keep `server_ops.py`'s advertised Kubernetes version
+`AMC_RUN_REAL_CLIENT_SMOKE=1` and the clients on `PATH`; `make check` sets the
+variable, so it tests the gate host's installed clients. When those client
+versions move, keep `server_ops.py`'s advertised Kubernetes version
 within supported kubectl skew, update README's tested-version sentence, and run
 both real-client smokes. Sources: `src/anomaly_metric_creator/server_ops.py`;
 `tests/test_server.py`; `README.md`.
 
-One exact Python-tool pin has no automated bump path. Dependabot cannot reach
-it: the `uv` ecosystem runs `versioning-strategy: lockfile-only`, which leaves
-`pyproject.toml`'s manifest untouched.
+Two exact Python-tool pins have no automated bump path. Dependabot cannot
+reach them: the `uv` ecosystem runs `versioning-strategy: lockfile-only`, which
+leaves `pyproject.toml`'s manifest untouched, and it never reads
+`scripts/check.sh`.
 
 - **`mypy==2.1.0`** — `pyproject.toml` `dev` extra. To bump: raise the pin,
   run `uv sync --extra dev`, then run `python tools/check_mypy_gate.py` and
   confirm the clean-module list is still error-free. A new mypy release that
   reclassifies errors in the gated modules blocks the bump until the modules
   are fixed — never drop a module to pass.
+- **`socketsecurity==2.4.10`** — the `uvx --from` pin in `scripts/check.sh`'s
+  Socket step. To bump: raise the pin, then run the step with
+  `SOCKET_SECURITY_API_KEY` set and confirm it exits 0. Version 2.1.0 fails
+  against the current Socket API with `APIResourceNotFound`.
 
 Code scanning runs through GitHub's CodeQL default setup, enabled by the
 organization's "GitHub recommended" security configuration. The repository has
