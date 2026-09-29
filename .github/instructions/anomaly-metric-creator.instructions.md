@@ -18,26 +18,16 @@ specifics.
 
 ## Local-first review cadence
 
-Prefer local evidence before asking for another remote review or broad GitHub
-Actions run. The repo's stable branch-protection check is `CI Result`, which
-aggregates the application and Socket jobs; `.github/workflows/ci.yml` chooses
-a lightweight, quick, or full application lane via
-`scripts/classify-ci-changes.sh`. `tools/check_ci_review_contract.py` guards
-the workflow/script/doc anchors that keep that cadence from drifting. Code
-scanning runs through GitHub's CodeQL default setup (the organization security
-configuration), not a repository workflow. Default setup rejects
-advanced-setup uploads, so flag any new workflow step that calls
-`github/codeql-action`.
+Prefer local evidence before asking for another remote review. GitHub Actions
+runs no workflow in this repository. The merge gate is local: `sd-ship merge`
+runs `make check` (`scripts/check.sh`) and posts `sd/local-gate`, the one
+required check. `tools/check_local_gate_contract.py` guards the gate's named
+anchors and fails any `tools/check_*.py` lint that nothing runs. Code scanning
+runs through GitHub's CodeQL default setup (the organization security
+configuration), not a repository workflow.
 
-- For docs/spec/agent/review-tooling-only diffs, expect the lightweight lane
-  and avoid requesting the full test lane unless the content changes a
-  behavior contract.
-- For routine app-path PR updates, the quick lane runs install smoke, ruff,
-  review-churn lint tests, and focused server compatibility tests.
-- For app-required opened/reopened/ready PRs, the `full-ci` label,
-  workflow/dependency changes, workflow dispatch, and `main` pushes, expect the
-  py3.14 test lane and heavy/non-heavy pytest split (Python 3.14 is the only
-  CI-tested version).
+- Python 3.14 is the only tested version; `make check` runs the heavy and
+  non-heavy pytest partitions and the coverage threshold.
 - Before a final remote Copilot pass, prefer a local
   `.venv/bin/pre-commit run --all-files` plus
   `node scripts/check-review-preflight.mjs` run. Those are the deterministic
@@ -58,10 +48,10 @@ index-only/file-only rows, invalid encoding, empty values, flag-looking values,
 wildcard namespaces, invalid owner/repo slugs, missing paths, and unintended
 whole-repo scans.
 
-For docs, skills, prompts, and CI changes, check lockstep across
+For docs, skills, prompts, and gate changes, check lockstep across
 `docs/spec`, `.agents/skills` and its rendered copies,
 `.github/instructions`, `.pre-commit-config.yaml`,
-`scripts/classify-ci-changes.sh`, `tools/check_ci_review_contract.py`,
+`scripts/check.sh`, `tools/check_local_gate_contract.py`,
 `tools/check_copilot_instruction_contract.py`, and focused tests. When the PR
 description is incomplete, leave one top-level scope comment naming the exact
 changed paths or behaviors that must be added instead of separate inline
@@ -221,9 +211,9 @@ confirmed but the diff does not support:
 13. **Default-behavior changes** — any default parameter value or
     fallback path change is named in the PR description and tested
     on both old and new caller shapes.
-14. **CI / workflow / dependency hygiene** — workflow YAML, dependency pins,
+14. **CI / workflow / dependency hygiene** — the local gate, dependency pins,
     Dependabot behavior, and generated review instructions stay in lockstep
-    with `docs/spec/`, `pyproject.toml`, pre-commit, and CI.
+    with `docs/spec/`, `pyproject.toml`, pre-commit, and `scripts/check.sh`.
 15. **Changelog / version impact** — user-visible behavior, compatibility,
     package metadata, and release posture are reflected in `CHANGELOG.md` and
     the version plan, or the PR explains why no entry/bump is warranted.

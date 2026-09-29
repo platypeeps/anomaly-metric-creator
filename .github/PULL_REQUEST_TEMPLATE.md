@@ -19,11 +19,11 @@ review, not by a gate. -->
 ## Test plan
 
 <!-- Bulleted markdown checklist of TODOs for testing this PR. Include focused
-checks first, then the local gate or remote full CI when relevant. -->
+checks first, then the full local gate (`make check`) when relevant. -->
 
 - [ ] Focused local checks:
 - [ ] Local deterministic gate: `.venv/bin/pre-commit run --all-files && node scripts/check-review-preflight.mjs`
-- [ ] Full local gate or remote `full-ci` label needed? _yes/no, with reason_
+- [ ] Full local gate (`make check`) run? _yes/no, with reason_
 
 ## Pre-PR checklist
 

@@ -39,27 +39,7 @@ updates:
     commit-message:
       prefix: "chore(pre-commit)"
 
-  # GitHub Actions — keep the workflow action pins (checkout, setup-uv,
-  # fetch-metadata) fresh now that .github/workflows/ exists.
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-      timezone: "America/Denver"
-    commit-message:
-      prefix: "ci(deps)"
-    ignore:
-      # The sd-ai-command-pack pin is set by hand, not by Dependabot. The action
-      # runs the pack's own code out of the pinned checkout, so a bump is a
-      # behaviour change across the whole pack, not a version number. Bump it
-      # deliberately, in its own commit, with
-      # `sd-review setup-github --pin <sha> --force`. Why the guard exists is
-      # recorded in the pack at actions/review-route/README.md; this comment
-      # names no incident, pull request or SHA on purpose, so that it does not
-      # go stale the next time the pin moves.
-      - dependency-name: "platypeeps/sd-ai-command-pack/actions/review-route"
+  # No github-actions entry: this repository has no workflow files.
 
   # No npm ecosystem entry: OpenCode regenerates .opencode/package.json
   # (pinned to the locally installed opencode version) and its lockfile on

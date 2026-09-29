@@ -33,10 +33,8 @@ remote review loop.
 
 - Keep `pyproject.toml`'s `ruff==` pin and `.pre-commit-config.yaml`'s
   `astral-sh/ruff-pre-commit` rev in lockstep.
-- Direct third-party workflow installs must use `python -m pip install` or
-  `uv pip install` with exact `==` pins.
-- CI cadence changes should update `scripts/classify-ci-changes.sh`,
-  `.github/workflows/ci.yml`, `docs/DEVELOPMENT_CYCLE.md`, and
+- Merge-gate changes should update `scripts/check.sh`,
+  `tools/check_local_gate_contract.py`, `docs/DEVELOPMENT_CYCLE.md`, and
   `docs/spec/amc/backend/testing-quality.md` together.
 - Copilot review surfaces should point at `docs/spec/` and the repo's scripts
   rather than copying project conventions into every platform-specific

@@ -101,21 +101,20 @@ multi-hundred-MB CSVs. Sources: `tests/conftest.py`;
 `tests/test_correctness.py`; `tests/test_gauges_file.py`;
 `tools/check_test_resource_cost.py`.
 
-The `test-resource-cost` pre-commit hook and always-run CI repository guard
-enforce those executable call shapes with Python AST parsing. A deliberately
+The `test-resource-cost` pre-commit hook and the `scripts/check.sh` repository
+guard enforce those executable call shapes with Python AST parsing. A deliberately
 small control, log, or schema read may use a trailing
 `# resource-lint: allow` marker on the call's source span; prefer streaming for
-generated data. Sources: `.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
+generated data. Sources: `.pre-commit-config.yaml`; `scripts/check.sh`;
 `tools/check_test_resource_cost.py`; `tests/test_test_resource_cost_lint.py`.
 
 Tests that use POSIX-only modules or attributes must guard collection on
-platforms where those APIs are missing. Sources: `tests/`;
-`.github/workflows/ci.yml`.
+platforms where those APIs are missing. Sources: `tests/`.
 
 A subprocess test asserting that `serve` **rejects** a flag combination must
 pass a `timeout`. The assertion is that the process exits nonzero, so if the
 gate ever regresses the invocation does not fail the test — it starts a real
-blocking server and hangs the suite until the CI job's own limit kills it,
+blocking server and hangs the suite until an outer timeout kills it,
 turning a specific gate regression into an unattributable timeout. A regression
 must fail loudly, not hang. Sources: `tests/test_cli.py`
 (`_SERVE_REJECT_TIMEOUT_SECONDS`).
@@ -129,109 +128,98 @@ local full-suite command. A shared session fixture can be instantiated on
 `min(consuming files, workers)` processes even under loadfile distribution;
 four workers are the measured saturation point for the file-granular suite.
 Sources:
-`pyproject.toml`; `README.md`; `tests/conftest.py`;
-`.github/workflows/ci.yml`.
+`pyproject.toml`; `README.md`; `tests/conftest.py`; `scripts/check.sh`.
 
 Use `-n 0` for true in-process serial runs such as `pdb`; `-n 1` still spawns
-an xdist worker subprocess. The heavy/light CI partition is a memory-isolation
-strategy, not the normal local speed path: on the 2026-07-20 checkout, the
-complete default run took 253.36s while the serial heavy partition alone took
-345.01s. Sources: `README.md`;
-`pyproject.toml`.
+an xdist worker subprocess. The heavy/light partition in `make check` exists
+to collect coverage per partition, not to speed up a local run: on the
+2026-07-20 checkout, the complete default run took 253.36s while the serial
+heavy partition alone took 345.01s. Sources: `README.md`; `pyproject.toml`;
+`scripts/check.sh`.
 
 The `heavy` marker is auto-applied by `tests/conftest.py` based on fixture
 closure or a parametrized string naming a registered heavy fixture, not
 hand-written on tests. The latter covers indirect `request.getfixturevalue`
 lookups, which do not enter `item.fixturenames`. Each registered heavy fixture
 name must resolve to exactly one definition so collection cannot bind a light
-shadow fixture to a heavy name. CI runs both partitions under two-worker xdist
-with `--dist loadfile`; the selectors keep the GB-scale fixtures out of the
-light worker pool while preserving file-owned fixture locality. Sources:
-`tests/conftest.py`; `pyproject.toml`;
-`.github/workflows/ci.yml`; `README.md`;
+shadow fixture to a heavy name. `make check` runs both partitions with
+`--dist loadfile`; the selectors keep the GB-scale fixtures out of the light
+worker pool while preserving file-owned fixture locality. Sources:
+`tests/conftest.py`; `pyproject.toml`; `scripts/check.sh`; `README.md`;
 `tests/test_heavy_marker.py`.
 
-## Scenario: CI test partition worker contract
+## Scenario: test partition worker contract
 
 ### 1. Scope / Trigger
 
-- Trigger: a change to the heavy/light marker boundary, either pytest worker
-  count, xdist distribution mode, or the GitHub-hosted runner capacity premise.
-  Sources: `.github/workflows/ci.yml`; `tests/conftest.py`;
-  `docs/work/archive/2026-07/2026-07-18-perf-ci-worker-counts/design.md`.
+- Trigger: a change to the heavy/light marker boundary, the partition worker
+  count, or the xdist distribution mode. Sources: `scripts/check.sh`;
+  `tests/conftest.py`.
 
 ### 2. Signatures
 
-- Heavy lane: `pytest -n 2 --dist loadfile -m heavy --cov=src/anomaly_metric_creator --cov-report=`.
-- Light lane: `pytest -n 2 --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=`.
-  Sources: `.github/workflows/ci.yml`; `tools/check_ci_review_contract.py`.
+- Heavy partition: `pytest -n "$WORKERS" --dist loadfile -m heavy --cov=src/anomaly_metric_creator --cov-report=`.
+- Light partition: `pytest -n "$WORKERS" --dist loadfile -m "not heavy" --cov=src/anomaly_metric_creator --cov-report=`.
+- `WORKERS` defaults to 4; `CHECK_PYTEST_WORKERS` overrides it on a host with
+  less memory. Sources: `scripts/check.sh`;
+  `tools/check_local_gate_contract.py`.
 
 ### 3. Contracts
 
-- Keep the GB-scale fixture closure in its own heavy lane. Two workers are
-  adopted because run `29798826800` measured 5,333,032 KiB peak system used
-  memory and 80,632,056 KiB post-run free disk, clearing the pre-committed
-  12,582,912 KiB / 2,097,152 KiB thresholds. Keep `--dist loadfile` so each
-  file's GB-scale fixtures remain on one worker.
-- Keep `--dist loadfile` in the light lane so a test file and its shared
-  fixtures stay on one worker. Retain two workers because the measured
-  four-worker CI trial saved only 12 seconds against a 364-second baseline,
-  below its pre-committed 100-second adoption threshold.
+- Keep the GB-scale fixture closure in its own heavy partition, with
+  `--dist loadfile` so each file's GB-scale fixtures remain on one worker.
+- Keep `--dist loadfile` in the light partition so a test file and its shared
+  fixtures stay on one worker.
 - The heavy and light selectors must remain disjoint and their collected counts
   must sum to the full suite. Sources: `tests/conftest.py`;
-  `tests/test_heavy_marker.py`; `.github/workflows/ci.yml`;
-  `docs/work/archive/2026-07/2026-07-18-perf-ci-worker-counts/prd.md`.
+  `tests/test_heavy_marker.py`; `scripts/check.sh`.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Required result |
 | --- | --- |
-| Heavy marker closure becomes empty | `pytest -m heavy` exits 5 and fails CI |
-| Light command loses `-n 2` or `--dist loadfile` | CI review contract guard fails |
+| Heavy marker closure becomes empty | `pytest -m heavy` exits 5 and fails `make check` |
+| A partition selector disappears from `scripts/check.sh` | the local gate contract guard fails |
 | Heavy + light collection differs from full collection | Treat as a partition defect and do not publish |
-| Heavy worker count is raised without runner evidence | Do not publish; runner evidence and a pre-committed decision boundary are required |
 
-Sources: `tools/check_ci_review_contract.py`;
-`tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
-`docs/work/archive/2026-07/2026-07-20-perf-ci-heavy-worker-trial/prd.md`.
+Sources: `tools/check_local_gate_contract.py`;
+`tests/test_local_gate_contract.py`; `tests/test_heavy_marker.py`.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: both selectors use `-n 2 --dist loadfile`, the GB-scale fixture closure
-  remains isolated in the heavy lane, and both selectors cover the collection.
-- Base: a local debugger run overrides the defaults with `-n 0` without
-  changing the CI contract.
-- Bad: `--dist load` scatters one file across workers, or the heavy lane is
-  parallelized solely because it passed on a higher-capacity developer host.
+- Good: both selectors use `--dist loadfile`, the GB-scale fixture closure
+  remains isolated in the heavy partition, and both selectors cover the
+  collection.
+- Base: a local debugger run overrides the defaults with `-n 0`.
+- Bad: `--dist load` scatters one file across workers.
 
 ### 6. Tests Required
 
-- `tests/test_ci_review_contract.py` pins the exact heavy and light workflow
-  commands and mutation-tests the live workflow contract.
 - `tests/test_heavy_marker.py` pins fixture-closure classification, indirect
   parametrized lookup classification, and heavy-name uniqueness.
-- Before publishing a worker-count change, collect the heavy, light, and full
+- `tests/test_local_gate_contract.py` mutation-tests the partition anchors in
+  `scripts/check.sh`.
+- Before publishing a partition change, collect the heavy, light, and full
   suites and assert that the first two counts sum to the third. Sources:
-  `tests/test_ci_review_contract.py`; `tests/test_heavy_marker.py`;
-  `docs/work/archive/2026-07/2026-07-18-perf-ci-worker-counts/implement.md`.
+  `tests/test_heavy_marker.py`; `tests/test_local_gate_contract.py`.
 
 ### 7. Wrong vs Correct
 
 Wrong:
 
 ```bash
-pytest -n 2 --dist load -m "not heavy"
+pytest -n 4 --dist load -m "not heavy"
 ```
 
 Correct:
 
 ```bash
-pytest -n 2 --dist loadfile -m "not heavy"
+pytest -n 4 --dist loadfile -m "not heavy"
 ```
 
 `loadfile` keeps file-scoped fixture work on one worker and prevents worker
 fan-out from multiplying expensive fixture construction. Sources:
-`pyproject.toml`; `tests/conftest.py`; `.github/workflows/ci.yml`.
+`pyproject.toml`; `tests/conftest.py`; `scripts/check.sh`.
 
 When two entry points produce byte-identical GB-scale artifacts through one
 shared writer, co-locate their file-owned fixtures so `loadfile` creates each
@@ -244,23 +232,23 @@ Ruff F401 is selected in `pyproject.toml` and scoped to tests by
 `.pre-commit-config.yaml`; run `.venv/bin/ruff check tests/` or
 `.venv/bin/pre-commit run --all-files` for touched test hygiene. Sources:
 `pyproject.toml`; `.pre-commit-config.yaml`; `README.md`;
-`.github/workflows/ci.yml`.
+`scripts/check.sh`.
 
 Additional mechanical guards catch recent review-churn patterns before PR
 review: syntax-only `ast.parse` over Python files, Ruff F841 unused locals for
 runtime/tools/hooks, agent-hook exception-shape checks, work-item placeholder
 checks, Copilot instruction contract
 checks, trace-payload validation anti-pattern checks, and the canonical
-clean-module mypy gate in `tools/check_mypy_gate.py`. CI invokes the
-AMC-module-load, role-name, and agent-hook-exception guards from the always-run
-changes job under uv-managed Python 3.14; role-name live-tree coverage includes
-`src/`, `scripts/`, and `.agents/`. Keep these hooks
+clean-module mypy gate in `tools/check_mypy_gate.py`. `scripts/check.sh`
+invokes the AMC-module-load, test-resource-cost, and role-name guards over the
+tracked tree; role-name live-tree coverage includes `src/`, `scripts/`, and
+`.agents/`. Keep these hooks
 stdlib-only where they are local scripts, with the documented `0`/`1`/`2` exit
 contract and acceptance tests over both temporary fixtures and the live repo
 tree. `tools/benchmark_combine.py` is the one intentional exception to the
 every-tool-has-tests convention: it is a measurement harness (imports the
 project + numpy, not a `check_*` lint) with no `0`/`1`/`2` contract and no
-acceptance test, and is not wired into pre-commit or CI. Sources:
+acceptance test, and is not wired into pre-commit or `make check`. Sources:
 `.pre-commit-config.yaml`;
 `tools/check_python_syntax.py`;
 `tools/check_work_item_placeholders.py`;
@@ -278,28 +266,44 @@ pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
 `.pre-commit-config.yaml`. Dependabot moves only the `rev` (the `uv`
 ecosystem's `lockfile-only` strategy cannot move an `==` pin), so every
 ruff-pre-commit Dependabot PR fails `tools/check_ruff_lockstep.py` by
-construction. `dependabot-auto-merge.yml` never arms auto-merge for that PR,
-and `tools/check_ci_review_contract.py` pins the exclusion; a human pushes
-the matching `ruff==` and `uv.lock` bump onto it, then merges. Sources:
-`pyproject.toml`; `.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
-`.github/workflows/dependabot-auto-merge.yml`;
-`tests/test_ruff_lockstep_lint.py`; `tests/test_ci_review_contract.py`.
+construction. Nothing auto-merges it; a human pushes the matching `ruff==` and
+`uv.lock` bump onto it, then merges. Sources: `pyproject.toml`;
+`.pre-commit-config.yaml`; `scripts/check.sh`;
+`tests/test_ruff_lockstep_lint.py`.
 
-Two other exact `==` pins have no automated update path — Dependabot's
-`lockfile-only` `uv` strategy cannot move a manifest `==`, and the workflow
-`python -m pip install` step is not a tracked ecosystem: `mypy==` in
-`pyproject.toml`'s `dev`
-extra and `socketsecurity==` in `.github/workflows/ci.yml`. Their manual bump
-procedure (raise the pin, then verify the mypy baseline count is unchanged and
-the gated clean-module list still passes / the Socket job stays green) lives in
-the "Pinned CI tool bumps" subsection of `docs/DEVELOPMENT_CYCLE.md`, pointed at
-from the pre-PR CI-hygiene heading. Sources: `pyproject.toml`;
-`.github/workflows/ci.yml`; `docs/DEVELOPMENT_CYCLE.md`.
+One other exact `==` pin has no automated update path, because Dependabot's
+`lockfile-only` `uv` strategy cannot move a manifest `==`: `mypy==` in
+`pyproject.toml`'s `dev` extra. Its manual bump procedure (raise the pin, then
+verify the gated clean-module list still passes) lives in the "Pinned tool
+bumps" subsection of `docs/DEVELOPMENT_CYCLE.md`, pointed at from the pre-PR
+CI-hygiene heading. Sources: `pyproject.toml`; `docs/DEVELOPMENT_CYCLE.md`.
 
-## Local and Remote Review Gates
+## Local Review and Merge Gates
 
-The local review gate is two repo-owned commands, run in this order rather
-than assembled by hand each time:
+GitHub Actions runs no workflow in this repository; the workflow files were
+deleted on 2026-09-28. The merge gate is local. `sd-ship merge` runs
+`make check` and posts `sd/local-gate`, the one required check, because the
+repository's `repo.ci` is `local`. `make check` runs `scripts/check.sh`, which
+runs these steps in order:
+
+1. Sync `.venv-check` from `uv.lock` (`uv sync --extra dev --locked`).
+2. Branch name and repository guards over the tracked tree.
+3. Whitespace against the merge base, shell syntax, Python syntax, the
+   work-item guards, the local gate contract guard, and the Copilot
+   instruction contract guard.
+4. The installed console-script smoke, ruff lockstep, ruff F401 and F841, and
+   the clean-module mypy gate.
+5. The heavy and light pytest partitions with coverage, then
+   `coverage report --fail-under=85`.
+6. `pre-commit run --all-files` and `node scripts/check-review-preflight.mjs`.
+
+`tools/check_local_gate_contract.py` guards the named anchors of that chain in
+`Makefile`, `scripts/check.sh`, and `.pre-commit-config.yaml`. It also fails
+any `tools/check_*.py` lint that no pre-commit hook and no other script runs.
+Sources: `Makefile`; `scripts/check.sh`; `.pre-commit-config.yaml`;
+`tools/check_local_gate_contract.py`; `tests/test_local_gate_contract.py`.
+
+During iteration, the cheaper review gate is two repo-owned commands:
 
 ```bash
 .venv/bin/pre-commit run --all-files
@@ -308,118 +312,31 @@ node scripts/check-review-preflight.mjs
 
 `pre-commit run --all-files` covers ruff, the syntax gates, and every
 mechanical guard under `tools/`. The review preflight then runs the three
-checks that are deliberately not per-file hooks: the CI/review cadence contract
+checks that are deliberately not per-file hooks: the local gate contract
 guard, the Copilot instruction contract guard, and the canonical clean-module
-mypy gate. Review-churn mutation tests run in GitHub CI instead of being
-repeated locally, and no AI review provider is wired into the local gate.
-
-This section named an installed command pack's full-check script until
-2026-08-30, along with the pack's own preflights, scope checks, install audit,
-Obsidian KB refresh, and Prism/Gito toggles. None of that is part of this
-repository any more, and the gate above runs from a fresh clone with no
-machine-side install.
-Sources: `.pre-commit-config.yaml`;
-`scripts/check-review-preflight.mjs`;
-`tools/check_ci_review_contract.py`;
+mypy gate. No AI review provider is wired into the local gate. Sources:
+`.pre-commit-config.yaml`; `scripts/check-review-preflight.mjs`;
 `tools/check_copilot_instruction_contract.py`;
-`tests/test_ci_change_classifier.py`;
-`tests/test_ci_review_contract.py`;
-`tests/test_copilot_instruction_contract.py`;
-`tests/test_python_syntax_lint.py`;
-`tests/test_workflow_pip_lint.py`;
-`tests/test_trace_payload_antipatterns_lint.py`; `tests/test_server.py`;
-`docs/DEVELOPMENT_CYCLE.md`.
+`tests/test_copilot_instruction_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
 
-GitHub CI must keep the stable aggregate branch-protection context named
-`CI Result`, while `scripts/classify-ci-changes.sh` selects the cheapest safe
-application lane:
-lightweight readiness for docs/spec/agent/review-tooling-only changes and
-explicitly enumerated repo-only automation, quick
-test for ordinary PR update churn that still touches app paths, and the full
-Python 3.14 test lane for app-required opened/reopened/ready PRs,
-`full-ci` label runs, auto-merge-armed PRs (the `auto_merge_enabled` event
-and every later push or label event on an armed PR, via the payload's
-`auto_merge` field),
-workflow/dependency changes, manual dispatch, and `main` pushes. The full lane
-uses concurrent `test_heavy` and `test_light` jobs followed by
-`coverage_combine`; the light job owns the existing console-script, ruff, and
-mypy gates plus the checksum-pinned kubectl v1.36.2 / Helm v4.2.0 real-client
-server smokes, while the combine job merges visible raw-coverage artifacts,
-generates XML, and enforces the 85% threshold. Auto-merge
-must never merge on quick-lane evidence, and `main` pushes run in per-commit
-concurrency groups so merge-burst runs cannot cancel each other's backstop
-verdicts. The version policy (decided 2026-07-06) is
-latest-stable-CPython-only: the single CI matrix version and
-`requires-python` in `pyproject.toml` are the same value (currently
-`>=3.14`) and move forward together when a new stable CPython lands —
-there is no older declared floor and no multi-version lane. Sources:
-`.github/workflows/ci.yml`; `scripts/classify-ci-changes.sh`;
-`tools/check_ci_review_contract.py`; `tests/test_ci_change_classifier.py`;
-`tests/test_ci_review_contract.py`; `docs/DEVELOPMENT_CYCLE.md`.
+The version policy (decided 2026-07-06) is latest-stable-CPython-only:
+`scripts/check.sh` and `requires-python` in `pyproject.toml` name the same
+version (currently 3.14) and move forward together. There is no older declared
+floor. The real kubectl and Helm client smokes are opt-in: they skip unless
+`AMC_RUN_REAL_CLIENT_SMOKE=1` is set and the clients are on `PATH`. Sources:
+`scripts/check.sh`; `pyproject.toml`; `tests/test_server.py`.
 
-The application and Socket jobs in `ci.yml` honor the `full-ci` label
-**one-shot** — only at the `labeled` event, so a later plain `synchronize`
-drops the cost-gated full matrix/scan back to the quick lane unless auto-merge
-is armed or dependency/workflow files changed. `tools/check_ci_review_contract.py`
-pins this with a `_require_not_contains` guard that keeps the persistent
-re-check form (`contains(github.event.pull_request.labels.*.name, 'full-ci')`)
-out of `ci.yml`. Sources: `.github/workflows/ci.yml`;
-`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
-
-The aggregate `test` job is guarded with `if: ${{ !cancelled() }}`, never
-`always()`. When arming auto-merge triggers a fresh full run that cancels the
-in-progress lane, the aggregate is cancelled *with* the run: its `test` context
-reports `cancelled`, the required `CI Result` aggregate cannot pass, and
-auto-merge waits for the superseding run's real verdict. `always()` would
-instead run the aggregate during cancellation and evaluate
-`test "cancelled" = "success"` — a transient red on every auto-merge-armed PR.
-The contract guard pins the `!cancelled()` form so a revert is caught. A
-superseded `main`-push commit's backstop run is deliberately *not* cancelled
-(per-commit concurrency groups), so a merge burst spends N runner suites; that
-is the accepted cost of the "every merge commit gets a completed verdict"
-guarantee, not a bug. Sources: `.github/workflows/ci.yml`;
-`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
-
-On the *pull-request* side that same cancellation is not free, so **order the
-lifecycle events to leave exactly one run in flight at the end**: apply
-`full-ci` and take the PR out of draft *before* pushing the finish-work
-bookkeeping commits, not after. Each of `ready_for_review`, `labeled`, and a
-push starts a run whose concurrency group cancels the in-flight one, and the
-cancelled run's rows stay attached to the head in `statusCheckRollup` beside
-their replacements. GitHub's own branch protection resolves this correctly — it
-evaluates the latest result per context name — but a merge-eligibility probe
-that classifies each rollup row independently counts every `CANCELLED` row as
-blocking and refuses a PR that GitHub reports `CLEAN` / `MERGEABLE`. On PR #360
-that cost a full watch budget plus a `gh run rerun` of the superseded run purely
-to stop its rows being cancelled; no check had failed. The rows are the
-observable symptom of a *correct* cancellation, so nothing in this repository's
-workflows needs changing — only the event order does. Sources:
-`.github/workflows/ci.yml`; `docs/DEVELOPMENT_CYCLE.md`.
-
-All events run on the standard `ubuntu-latest` runner. The org's
-`ubuntu-latest-m` larger runner stopped being served on 2026-07-04 — main-push
-jobs sat queued for hours with `runner_id=0`, so the post-merge backstop never
-ran — and larger runners bill per-minute besides. Public-repository standard
-runners provide 4 vCPU, 16 GB RAM, and 14 GB SSD with free minutes, so wall
-clock rather than billed minutes is the optimization target; that 16 GB ceiling
-is why the suite is split by the `heavy` marker instead of run in one worker
-pool (a prior full `-n 2` run OOM-died after 32 minutes holding the N=3 / 7-day
-fixtures across workers). Sources: `.github/workflows/ci.yml`;
-`tests/conftest.py`; `docs/DEVELOPMENT_CYCLE.md`.
-
-Coverage and mypy each run as a **report-only + gated** pair in the full lane.
-mypy: a report-only baseline step (`continue-on-error: true`) over the whole
-`[tool.mypy]` `files` set — `legacy.py` and the server layer are the known-messy
-~137-error baseline — plus a gating step running
-`mypy --follow-imports=silent` over the currently-clean modules, failing on any
-error there. The command and gated list are owned by `tools/check_mypy_gate.py`,
-which CI and the local review preflight both invoke; `--follow-imports=silent`
-checks imports for inference but reports only errors originating in the listed
-files, so importing still-dirty `legacy.py` does not leak into the gate. Grow
-that list as decomposition extracts clean modules; never drop one to silence a
-regression. `tests/test_mypy_gate_lint.py` asserts the list's length exactly, so
-adding a module means updating that count in the same diff — the test is the
-lockstep, not a doc rule.
+Coverage and mypy each gate in `make check`. mypy runs
+`mypy --follow-imports=silent` over the currently-clean modules and fails on
+any error there. The command and gated list are owned by
+`tools/check_mypy_gate.py`, which `scripts/check.sh` and the local review
+preflight both invoke; `--follow-imports=silent` checks imports for inference
+but reports only errors originating in the listed files, so importing
+still-dirty `legacy.py` does not leak into the gate. Grow that list as
+decomposition extracts clean modules; never drop one to silence a regression.
+`tests/test_mypy_gate_lint.py` asserts the list's length exactly, so adding a
+module means updating that count in the same diff — the test is the lockstep,
+not a doc rule.
 
 **Never bind a builtin's name in a class body.** A method named `list`, `dict`,
 `type`, or `id` is harmless at runtime — method bodies resolve names by LEGB and
@@ -429,263 +346,45 @@ annotation in that class then fails with `valid-type`, reported at the
 annotation site and not at the method that caused it. This kept
 `server_traces.py` out of the gate with 10 errors up to 700 lines from their
 cause (`08-06-server-traces-mypy-gate`). Rename the method; an alias
-re-creates the binding. Coverage: each pytest job runs `--cov=src/anomaly_metric_creator`
-with no inline report, renames its hidden `.coverage` to a visible lane-specific
-artifact, and uploads it; the coverage job combines both, generates
-`coverage.xml`, and only then gates with `coverage report --fail-under=85` — a
-no-regression ratchet ~3 points below the measured 88% for xdist/partition
-jitter headroom, ratcheted **up** as decomposition lands and never lowered to
-pass a red build. XML generation precedes the threshold step and `coverage.xml`
-uploads with `if: ${{ !cancelled() }}` so it publishes even when the gate trips.
-`[tool.coverage.run] relative_files = true` makes raw data portable across job
-checkouts, and `COVERAGE_CORE=sysmon` keeps tracing overhead inside the job
-timeout. The `--cov` flags stay CI-only — `addopts` / `required_plugins`
-deliberately do not reference pytest-cov, so local runs pay no tracing cost.
-Sources: `.github/workflows/ci.yml`; `tools/check_mypy_gate.py`;
-`pyproject.toml`; `tests/test_mypy_gate_lint.py`.
+re-creates the binding.
 
-## Scenario: GitHub Actions dependency pin updates
+Coverage: each pytest partition runs `--cov=src/anomaly_metric_creator` with no
+inline report, and `scripts/check.sh` renames its `.coverage` to a
+partition-specific file. The script then combines both and gates with
+`coverage report --fail-under=85` — a no-regression ratchet ~3 points below the
+measured 88% for xdist/partition jitter headroom, ratcheted **up** as
+decomposition lands and never lowered to pass a red build.
+`COVERAGE_CORE=sysmon` keeps tracing overhead low. The `--cov` flags stay in
+`scripts/check.sh` — `addopts` / `required_plugins` deliberately do not
+reference pytest-cov, so ordinary local runs pay no tracing cost. Sources:
+`scripts/check.sh`; `tools/check_mypy_gate.py`; `pyproject.toml`;
+`tests/test_mypy_gate_lint.py`.
 
-### 1. Scope / Trigger
-
-- Trigger: any update to `actions/checkout` or `astral-sh/setup-uv` in the
-  repository workflows.
-- This is an infrastructure contract spanning workflow execution, cache
-  behavior, and the local CI review guard.
-
-### 2. Signatures
-
-- Workflow action reference: `uses: <owner>/<action>@<40-lowercase-hex-SHA>`.
-- Uniform-pin guard: `_single_pinned_action_revision(text, action, *, path,
-  violations) -> str | None`.
-
-### 3. Contracts
-
-- Every `actions/checkout` use in `.github/workflows/ci.yml` must share one
-  full commit SHA. Every `astral-sh/setup-uv` use in that workflow must also
-  share one full commit SHA. The guard derives the accepted revision from the
-  workflow instead of hard-coding today's dependency version.
-- The coverage-combine job must use those same derived checkout and setup-uv
-  revisions. A partial update is invalid even when each individual reference
-  is pinned.
-- No workflow may call `github/codeql-action`. Code scanning runs through
-  GitHub's CodeQL default setup (the organization security configuration),
-  which rejects advanced-setup uploads.
-- setup-uv v9 changes the `prune-cache` default to `false`. Every CI step that
-  sets `enable-cache: true` must also set `prune-cache: true` to preserve the
-  repository's prior cache-size behavior explicitly.
-
-### 4. Validation & Error Matrix
-
-| Condition | Required result |
-| --- | --- |
-| Action uses a tag or short SHA | CI review contract fails with the offending revision |
-| Same action has two full SHAs in `ci.yml` | CI review contract fails with both revisions |
-| Coverage combine uses a different checkout or setup-uv SHA | CI review contract fails before remote CI |
-| A workflow calls `github/codeql-action` | CI review contract fails; default setup owns code scanning |
-| setup-uv cache enabled without explicit pruning | Treat as an unreviewed cache-cost behavior change |
-
-### 5. Good/Base/Bad Cases
-
-- Good: all checkout uses move to one new full SHA, all setup-uv uses move to
-  one new full SHA, and cached setup-uv steps retain `prune-cache: true`.
-- Base: an unrelated workflow edit leaves all existing action revisions
-  unchanged and uniform.
-- Bad: one Dependabot PR updates one `actions/checkout` use while another
-  remains on the previous SHA, or the contract checker is edited to bless a
-  specific current dependency SHA.
-
-### 6. Tests Required
-
-- `tests/test_ci_review_contract.py` must prove a complete action SHA advance
-  passes, mixed revisions fail, non-SHA references fail, and a
-  `github/codeql-action` workflow step fails.
-- `test_real_repo_contract_is_clean` must run against the edited live tree.
-- Workflow dependency changes require the repository full gate and the remote
-  full CI lane before merge.
-
-### 7. Wrong vs Correct
-
-Wrong:
-
-```yaml
-- uses: astral-sh/setup-uv@v9
-- uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-- uses: actions/checkout@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-```
-
-Correct:
-
-```yaml
-- uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
-  with:
-    enable-cache: true
-    prune-cache: true
-- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-```
-
-The correct form preserves supply-chain pinning and behavior while allowing a
-complete future dependency update to advance without editing the guard's
-source. Sources: `.github/workflows/ci.yml`;
-`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`;
-`https://github.com/astral-sh/setup-uv/releases/tag/v9.0.0`.
-
-## Scenario: CI event and lightweight guard contract
-
-### 1. Scope / Trigger
-
-- Trigger: any change to CI event cadence, path classification, the
-  lightweight guard runtime, or local/remote syntax-gate coverage.
-- This is an infrastructure contract spanning GitHub event inputs, a shell
-  classifier, workflow outputs, local pre-commit hooks, tests, and docs.
-
-### 2. Signatures
-
-- Classifier: `bash scripts/classify-ci-changes.sh [--force-app]
-  [--github-output] changed-files.txt`.
-- Lightweight Python guard: `uv run --python 3.14 --no-project python
-  <stdlib-only-check> [paths...]`.
-- Lightweight cache boundary: run
-  `install -d -m 0700 -- "$UV_CACHE_DIR"` after `setup-uv` and before any
-  `uv run` Python guard.
-- Shell syntax gate: `bash -n <review-tooling-shell-scripts...>`.
-
-### 3. Contracts
-
-- `workflow_dispatch` appends `--force-app`, making `app_required=true` even
-  for a documentation-only tip.
-- `labeled` selects full CI when the applied label is `full-ci` or the event's
-  pull request already has auto-merge armed.
-- `docs/spec/**`, `docs/work/**`, the rendered skill trees, the Copilot review
-  surfaces, and `.prism/rules.json` are lightweight review/documentation
-  surfaces. Dependency and workflow paths override that classification and
-  force the full lane.
-- `is_repo_tooling_path` may classify an explicit script lightweight only when
-  doing so skips no behavioral test. Tested scripts and all `tools/` paths stay
-  application-required; under-classification is safer than silently dropping
-  coverage.
-- Python syntax coverage includes top-level `scripts/*.py`. Both the workflow
-  and pre-commit shell gates enumerate the tracked shell scripts under
-  `scripts/` rather than naming them, so a new script is covered without an
-  edit here.
-- `setup-uv` may expose a cache directory with group/other permissions, and
-  the lightweight lane makes that inherited override private before running a
-  `uv run` guard. The check that made this load-bearing was a fail-closed cache
-  boundary in the command pack's library, which left with the pack on
-  2026-08-30; the hardening step is kept as plain hygiene, and nothing now
-  fails if it is skipped.
-
-### 4. Validation & Error Matrix
-
-| Condition | Required result |
-| --- | --- |
-| Manual dispatch of a docs-only tip | `app_required=true`; full lane eligible |
-| Any later label event on an armed PR | `full_ci_requested=true` |
-| Spec, work-item, or review-surface paths only | lightweight lane |
-| Dependency or workflow path mixed into that diff | full application lane |
-| Python guard cannot run under managed 3.14 | lightweight job fails |
-| Inherited `UV_CACHE_DIR` permits group/other access | harden it to `0700` before the `uv run` guards |
-| Toolchain/shared-library shell syntax is invalid | local and remote syntax gates fail |
-
-### 5. Good/Base/Bad Cases
-
-- Good: `docs/spec/amc/backend/index.md` plus `.prism/rules.json` stays
-  lightweight, the uv cache is private, and the lane reports review tooling.
-- Base: an ordinary runtime Python diff remains application-required.
-- Bad: a docs-only manual dispatch remains lightweight, or a non-`full-ci`
-  label on an armed PR rebuilds the required context from the quick lane, or
-  the lightweight `uv run` guards inherit a group/other-accessible uv cache.
-
-### 6. Tests Required
-
-- `tests/test_ci_change_classifier.py` asserts the lightweight positive cases
-  — docs, specs, platform skill roots, rendered skill payloads, review
-  surfaces, repo-owned tooling — and the runtime/dependency/workflow negative
-  cases. Pack scripts are not among them: since the thin conversion they live
-  on the machine, so no diff in this tree can contain one.
-- `tests/test_ci_review_contract.py` mutation-tests the labeled auto-merge
-  clause, manual-dispatch force-app, every managed-Python lightweight guard
-  command, private-cache setup ordering, and both syntax lists against the live
-  repository.
-- `tests/test_python_syntax_lint.py` parses all tracked Python under
-  `scripts/`, `src/`, `tests/`, `tools/`, and generated hook roots.
-
-### 7. Wrong vs Correct
-
-Wrong:
-
-```bash
-# setup-uv cache permissions are inherited unchanged.
-uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
-
-# Manual dispatch can leave a docs-only diff app_required=false.
-bash scripts/classify-ci-changes.sh --github-output changed-files.txt
-
-# Any non-full-ci label ignores the armed PR state.
-if [ "$PR_LABEL" = "full-ci" ]; then
-  full_ci_requested=true
-fi
-```
-
-Correct:
-
-```bash
-install -d -m 0700 -- "$UV_CACHE_DIR"
-uv run --python 3.14 --no-project python tools/check_copilot_instruction_contract.py
-
-classifier_args=(--github-output)
-if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-  classifier_args+=(--force-app)
-fi
-
-if [ "$PR_LABEL" = "full-ci" ] || [ "$PR_AUTO_MERGE" = "true" ]; then
-  full_ci_requested=true
-fi
-```
-
-Sources: `.github/workflows/ci.yml`; `.pre-commit-config.yaml`;
-`scripts/classify-ci-changes.sh`; `tests/test_ci_change_classifier.py`;
-`tools/check_ci_review_contract.py`;
-`tests/test_ci_review_contract.py`;
-`tests/test_python_syntax_lint.py`; `docs/DEVELOPMENT_CYCLE.md`.
+Shell and Python syntax coverage is derived, not pinned. `scripts/check.sh`
+enumerates tracked shell scripts under `scripts/` from the git index, and the
+pre-commit `shell-syntax` hook matches the same path pattern, so a new script is
+covered without an edit here. The pre-commit entry keeps `set -e`, or the loop
+would exit with the status of the last `bash -n` and mask an early failure.
+Python syntax coverage includes top-level `scripts/*.py`. Sources:
+`scripts/check.sh`; `.pre-commit-config.yaml`;
+`tools/check_local_gate_contract.py`; `tests/test_python_syntax_lint.py`.
 
 Code scanning runs through GitHub's CodeQL default setup, enabled by the
 organization's "GitHub recommended" security configuration; the repository
 carries no CodeQL workflow. Default setup rejects advanced-setup uploads, so
-the CI contract guard fails any workflow step that calls
-`github/codeql-action`. Branch protection requires only the `CI Result`
-context, which aggregates the application and Socket jobs.
-Socket should keep a visible PR check but fast-skip unless
-dependency/security-relevant files changed or full CI was requested. Sources:
-`.github/workflows/ci.yml`;
-`scripts/classify-ci-changes.sh`; `tools/check_ci_review_contract.py`;
+do not add a workflow that calls `github/codeql-action`. Sources:
 `docs/DEVELOPMENT_CYCLE.md`.
 
-Dependabot auto-merge should enable GitHub auto-merge for patch/minor updates
-without trying to approve the pull request with `GITHUB_TOKEN`, because this
-repo's workflow token is not allowed to create PR reviews. It must never arm
-auto-merge for `astral-sh/ruff-pre-commit`, whose PR moves one side of the
-ruff lockstep pair only. Sources:
-`.github/workflows/dependabot-auto-merge.yml`;
-`tools/check_ci_review_contract.py`; `tests/test_ci_review_contract.py`.
+Dependabot watches the `uv` and `pre-commit` ecosystems only; there are no
+workflow files for a `github-actions` entry to update. Nothing auto-merges a
+Dependabot PR. A ruff-pre-commit PR moves one side of the ruff lockstep pair
+only, so a human pushes the matching `ruff==` and `uv.lock` bump onto it, then
+merges it through `sd-ship merge`. Sources: `.github/dependabot.yml`;
+`tools/check_ruff_lockstep.py`; `tests/test_ruff_lockstep_lint.py`.
 
-No workflow in this repository refreshes the command pack. The thin conversion
-moved the payload to the machine install, leaving nothing here for a scheduled
-installer run to change, so the contract this section used to state — fixed PR
-branch, no-diff suppression, scoped-token writes — has no workflow to bind and
-is not replaced by an equivalent. A CI lane that refreshes the pack is a
-regression, not a gap: refreshes are operator-initiated against the machine
-install. Sources: `.github/workflows/`, which contains no pack-refresh
-workflow; `tools/check_ci_review_contract.py`, whose `REQUIRED_FILES` no longer
-names one.
-
-Windows portability coverage is collection-only and advisory: pull requests
-sync the locked Python 3.14 development environment on `windows-latest`, then
-run `pytest --collect-only -q`. The job must use `continue-on-error: true` and
-must not appear in the `test` or `CI Result` dependency lists. Sources:
-`.github/workflows/ci.yml`; `tools/check_ci_review_contract.py`;
-`tests/test_ci_review_contract.py`;
-`docs/DEVELOPMENT_CYCLE.md`.
+No workflow in this repository refreshes the command pack. Refreshes are
+operator-initiated against the machine install. Sources: `.github/`, which
+contains no workflow directory.
 
 ## Review Checklist
 
@@ -895,19 +594,17 @@ actually run rather than skim.
 
 ### CI / workflow / dependency hygiene
 
-- Pin third-party actions and in-workflow installs to exact versions; use
-  `python -m pip`, never bare `pip`, after `actions/setup-python`.
-- A job's `permissions:` grants exactly the scopes its steps need. Gate
-  secret-bearing triggers on actor/permission, and remember a fork
-  `pull_request` gets no secrets.
+- The repository carries no GitHub Actions workflow; the merge gate is
+  `make check`. A change to a gate step updates `scripts/check.sh`,
+  `tools/check_local_gate_contract.py`, and this spec together.
 - Two-place version pins are lint-enforced in lockstep; a Dependabot bump must
   not silently raise a declared `>=` floor (`versioning-strategy:
   lockfile-only`), and the `package-ecosystem` must match a lockfile that
   exists. Exact `==` pins Dependabot cannot reach have a manual path in the
-  "Pinned CI tool bumps" section of `docs/DEVELOPMENT_CYCLE.md`.
+  "Pinned tool bumps" section of `docs/DEVELOPMENT_CYCLE.md`.
 - Docs that tell users to run a tool ensure it is in the `dev` extra; `addopts`
-  plugin flags require a matching `required_plugins`; workflow shell snippets
-  must not assume runner-image tools without installing them.
+  plugin flags require a matching `required_plugins`; gate steps must not
+  assume host tools that `scripts/check.sh` does not install.
 - A new `tools/check_*.py` honors the `0`/`1`/`2` exit contract in its own
   docstring: a decode/IO failure exits `2`, not a traceback and not `1`; check
   `path.exists()` before skip-rules; parse `gh api --paginate` page-by-page;
@@ -938,8 +635,7 @@ lint plus tests over prose-only rules — the `ruff-lockstep` / `role-name-leaks
 not (the test-resource-cost rules recurred across several PRs after being
 documented). Sources:
 `.pre-commit-config.yaml`; `tests/test_role_name_leaks_lint.py`;
-`tests/test_branch_name_lint.py`; `tests/test_ruff_lockstep_lint.py`;
-`tests/test_workflow_pip_lint.py`.
+`tests/test_branch_name_lint.py`; `tests/test_ruff_lockstep_lint.py`.
 
 ### Known Copilot false positives (verify, don't reflexively fix)
 
@@ -981,7 +677,7 @@ confident-but-wrong claims cluster there. Otherwise treat Copilot and AI review
 comments as actionable by default, verifying against current `HEAD`, code
 comments, and actual trust boundaries before fixing. Sources:
 `.github/instructions/anomaly-metric-creator.instructions.md`;
-`.github/workflows/ci.yml`; `docs/REVIEW_PATTERNS.md`.
+`docs/REVIEW_PATTERNS.md`.
 
 ## Verification Commands
 
@@ -996,5 +692,4 @@ git diff --check
 
 Run the narrowest focused regression first, then affected files/suites, then
 broader checks when blast radius warrants it. Sources: `README.md`;
-`pyproject.toml`; `.pre-commit-config.yaml`; `.github/workflows/ci.yml`;
-`tests/`.
+`pyproject.toml`; `.pre-commit-config.yaml`; `scripts/check.sh`; `tests/`.

@@ -245,11 +245,11 @@ gate. Sources: `.github/PULL_REQUEST_TEMPLATE.md`; `docs/DEVELOPMENT_CYCLE.md`.
 
 The PR template should prompt for focused local checks, the local
 deterministic gate (`pre-commit run --all-files` plus
-`scripts/check-review-preflight.mjs`), and whether a remote `full-ci` label is
-needed. Review guidance should prefer local evidence and the stable aggregate
-`test` context before asking for repeated remote Copilot or Actions runs.
+`scripts/check-review-preflight.mjs`), and whether the full local gate
+(`make check`) ran. Review guidance should prefer local evidence before asking
+for repeated remote Copilot runs. `sd/local-gate` is the one required check.
 Sources: `.github/PULL_REQUEST_TEMPLATE.md`; `docs/DEVELOPMENT_CYCLE.md`;
-`tools/check_ci_review_contract.py`;
+`tools/check_local_gate_contract.py`;
 `tools/check_copilot_instruction_contract.py`;
 `scripts/check-review-preflight.mjs`; `.pre-commit-config.yaml`;
 `.github/copilot-instructions.md`;

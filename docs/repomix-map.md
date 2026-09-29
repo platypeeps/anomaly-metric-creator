@@ -84,10 +84,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
       references/
         server-compatibility-map.md
       SKILL.md
-  workflows/
-    ci.yml
-    dependabot-auto-merge.yml
-    sd-review-route.yml
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
@@ -530,8 +526,7 @@ docs/
   topology.md
 scripts/
   check-review-preflight.mjs
-  classify_ci_changes.sh
-  classify-ci-changes.sh
+  check.sh
   sync-agent-skills.py
   update_repomix
 src/
@@ -611,8 +606,6 @@ tests/
   test_atomic_writes.py
   test_branch_name_lint.py
   test_cascades.py
-  test_ci_change_classifier.py
-  test_ci_review_contract.py
   test_cli_surface.py
   test_cli.py
   test_combine.py
@@ -625,12 +618,12 @@ tests/
   test_emit_selection_hygiene.py
   test_gauges_file.py
   test_gpu_inference.py
-  test_guard_ci_coverage_lint.py
   test_heavy_marker.py
   test_instance_config.py
   test_instance_filter.py
   test_instances_per_component.py
   test_instances.py
+  test_local_gate_contract.py
   test_module_size_lint.py
   test_multiday_cascades.py
   test_mypy_gate_lint.py
@@ -679,17 +672,15 @@ tests/
   test_validate_output.py
   test_version.py
   test_work_item_placeholder_lint.py
-  test_workflow_pip_lint.py
 tools/
   benchmark_combine.py
   benchmark_mcp_window.py
   check_amc_module_load.py
   check_approval_duplicate.py
   check_branch_name.py
-  check_ci_review_contract.py
   check_copilot_instruction_contract.py
   check_csv_formula_trigger_lockstep.py
-  check_guard_ci_coverage.py
+  check_local_gate_contract.py
   check_module_size.py
   check_mypy_gate.py
   check_python_syntax.py
@@ -700,7 +691,6 @@ tools/
   check_test_resource_cost.py
   check_trace_payload_antipatterns.py
   check_work_item_placeholders.py
-  check_workflow_pip.py
   pr_comment.sh
 .env.example
 .gitignore
@@ -709,6 +699,7 @@ AGENTS.md
 anomaly-metric-creator.py
 CHANGELOG.md
 CLAUDE.md
+Makefile
 pyproject.toml
 README.md
 SECURITY.md

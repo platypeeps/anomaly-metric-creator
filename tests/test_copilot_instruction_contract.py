@@ -59,10 +59,10 @@ def _write_minimal_contract(root: Path) -> None:
 
         ## Local-first review cadence
 
-        Keep `tools/check_ci_review_contract.py`,
+        Keep `tools/check_local_gate_contract.py`,
         `tools/check_copilot_instruction_contract.py`, and
-        `scripts/classify-ci-changes.sh` in lockstep. The required
-        branch-protection context `CI Result` aggregates the jobs, and the
+        `scripts/check.sh` in lockstep. The required merge-gate check
+        `sd/local-gate` comes from `make check`, and the
         canonical CLI surface is the subcommand set plus `--emit`.
 
         ## Review-cycle reduction
@@ -120,7 +120,7 @@ def _write_minimal_contract(root: Path) -> None:
     _write(
         root / "scripts/check-review-preflight.mjs",
         """
-        python tools/check_ci_review_contract.py
+        python tools/check_local_gate_contract.py
         python tools/check_copilot_instruction_contract.py
         pytest tests/test_copilot_instruction_contract.py
         """,
@@ -193,7 +193,7 @@ def test_missing_review_preflight_wiring_fails(tmp_path: Path) -> None:
     review_preflight.write_text(
         review_preflight.read_text(encoding="utf-8").replace(
             "tests/test_copilot_instruction_contract.py",
-            "tests/test_ci_review_contract.py",
+            "tests/test_local_gate_contract.py",
         ),
         encoding="utf-8",
     )
