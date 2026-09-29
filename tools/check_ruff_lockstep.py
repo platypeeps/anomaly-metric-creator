@@ -23,9 +23,10 @@ ecosystem keeps advancing the ``rev``. Every ruff-pre-commit Dependabot
 PR is therefore drift by construction.
 
 This check runs in ``scripts/check.sh``, so such a PR fails ``make check``
-and ``sd/local-gate``. Nothing auto-merges a Dependabot PR: a human pushes the
-matching ``ruff==`` and ``uv.lock`` bump onto it, then merges it through
-``sd-ship merge``.
+and ``sd/local-gate``. Nothing auto-merges a Dependabot PR, and ``sd-review``
+refuses its unattributed commits: an attributed replacement PR carries the
+matching ``ruff==`` and ``uv.lock`` bump instead. The flow is in
+``docs/spec/amc/backend/testing-quality.md`` (Local Review and Merge Gates).
 
 Usage::
 
