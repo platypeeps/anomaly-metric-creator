@@ -106,6 +106,10 @@ def _check_gate_script(path: Path, text: str, violations: list[str]) -> None:
         ("coverage threshold", "coverage report --fail-under="),
         ("pre-commit over the whole tree", "pre-commit run --all-files"),
         ("review preflight", "node scripts/check-review-preflight.mjs"),
+        ("real client smoke opt-in", "AMC_RUN_REAL_CLIENT_SMOKE=1"),
+        ("real kubectl smoke", "test_real_kubectl_binary_smoke_when_available"),
+        ("real Helm smoke", "test_real_helm4_binary_smoke_when_available"),
+        ("Socket dependency scan", "socketcli --target-path"),
     ]:
         _require_contains(text, needle, path=path, label=label, violations=violations)
 
