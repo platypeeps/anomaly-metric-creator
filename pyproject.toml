@@ -58,7 +58,7 @@ dev = [
   # so a local `ruff check` and the `ruff-pre-commit` hook resolve the
   # same binary. Bump both lines together, plus `uv.lock`. Dependabot moves
   # only the pre-commit `rev` and never auto-merges it.
-  "ruff==0.16.8",
+  "ruff==0.16.9",
   "pre-commit>=3.7.0",
   # Pinned exactly: CI runs mypy in a report-only baseline step (finding
   # count only comparable across runs when every run resolves the same mypy)
