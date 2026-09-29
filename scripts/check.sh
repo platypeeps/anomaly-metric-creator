@@ -13,7 +13,9 @@
 # Skipped with a notice, and why:
 # - real kubectl/Helm smokes: each test skips when its client is not on PATH.
 #   The gate tests the installed clients; it pins and downloads none.
-# - Socket scan: skips when `SOCKET_SECURITY_API_KEY` is unset.
+#
+# The Socket scan needs `SOCKET_SECURITY_API_KEY`; the gate fails without it,
+# as in the sibling repositories.
 #
 # Not run: mypy over the whole package (only the clean-module gate below) and
 # Windows test collection. The gate host is macOS.
@@ -153,10 +155,10 @@ REVIEW_PREFLIGHT_PYTHON="$PY" node scripts/check-review-preflight.mjs
 step "Socket dependency scan"
 # 2.1.0 fails against the current API (APIResourceNotFound); 2.4.10 matches
 # the sibling repositories' pinned image.
-if [ -n "${SOCKET_SECURITY_API_KEY:-}" ]; then
-  uvx --from socketsecurity==2.4.10 socketcli --target-path "$PWD" --ignore-commit-files
-else
-  echo "SKIP: SOCKET_SECURITY_API_KEY is unset; no Socket scan ran."
+if [ -z "${SOCKET_SECURITY_API_KEY:-}" ]; then
+  echo "check: SOCKET_SECURITY_API_KEY is unset; the Socket scan cannot run" >&2
+  exit 1
 fi
+uvx --from socketsecurity==2.4.10 socketcli --target-path "$PWD" --ignore-commit-files
 
 step "check passed"

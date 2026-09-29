@@ -299,7 +299,8 @@ runs these steps in order:
    `AMC_RUN_REAL_CLIENT_SMOKE=1`.
 7. `pre-commit run --all-files` and `node scripts/check-review-preflight.mjs`.
 8. The Socket dependency scan (`socketcli`, `socketsecurity==2.4.10` through
-   `uvx`). It skips with a notice when `SOCKET_SECURITY_API_KEY` is unset.
+   `uvx`). The gate fails when `SOCKET_SECURITY_API_KEY` is unset, so a merge
+   never lands unscanned.
 
 Two checks that GitHub Actions once ran are gone on purpose (2026-09-29):
 
