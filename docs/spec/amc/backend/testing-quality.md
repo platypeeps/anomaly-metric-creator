@@ -266,8 +266,9 @@ pin in `pyproject.toml` and the `astral-sh/ruff-pre-commit` `rev` in
 `.pre-commit-config.yaml`. Dependabot moves only the `rev` (the `uv`
 ecosystem's `lockfile-only` strategy cannot move an `==` pin), so every
 ruff-pre-commit Dependabot PR fails `tools/check_ruff_lockstep.py` by
-construction. Nothing auto-merges it; a human pushes the matching `ruff==` and
-`uv.lock` bump onto it, then merges. Sources: `pyproject.toml`;
+construction. Its replacement PR carries the matching `ruff==` and `uv.lock`
+bump; the Dependabot paragraph under Local Review and Merge Gates gives the
+flow. Sources: `pyproject.toml`;
 `.pre-commit-config.yaml`; `scripts/check.sh`;
 `tests/test_ruff_lockstep_lint.py`.
 
@@ -392,9 +393,18 @@ do not add a workflow that calls `github/codeql-action`. Sources:
 
 Dependabot watches the `uv` and `pre-commit` ecosystems only; there are no
 workflow files for a `github-actions` entry to update. Nothing auto-merges a
-Dependabot PR. A ruff-pre-commit PR moves one side of the ruff lockstep pair
-only, so a human pushes the matching `ruff==` and `uv.lock` bump onto it, then
-merges it through `sd-ship merge`. Sources: `.github/dependabot.yml`;
+Dependabot PR, and none lands as opened. Its commits carry no
+`Authored-with:` trailer, so `sd-review` refuses them until the command pack
+can attribute them (sd:2065). Land each bump as a replacement PR instead:
+
+1. Branch from `main` and reproduce the change as a commit that carries the
+   `Authored-with:` trailer. Check that the diff matches the Dependabot PR's.
+2. Review, prepare, and merge the replacement through `sd-ship`.
+3. Close the Dependabot PR with a comment that names the replacement.
+
+A ruff-pre-commit bump moves one side of the ruff lockstep pair only, so its
+replacement also raises the `ruff==` pin and relocks
+(`uv lock --upgrade-package ruff`). Sources: `.github/dependabot.yml`;
 `tools/check_ruff_lockstep.py`; `tests/test_ruff_lockstep_lint.py`.
 
 No workflow in this repository refreshes the command pack. Refreshes are

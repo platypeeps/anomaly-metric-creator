@@ -147,9 +147,12 @@ no CodeQL workflow, and default setup rejects advanced-setup uploads. CodeQL is
 not a required check.
 
 Dependabot watches the `uv` and `pre-commit` ecosystems. Nothing auto-merges
-its PRs. An `astral-sh/ruff-pre-commit` bump moves only the hook `rev`, so it
-fails the ruff lockstep check until a human pushes the matching `ruff==` pin
-and `uv.lock` bump onto it (`uv lock --upgrade-package ruff`).
+its PRs, and `sd-review` refuses their unattributed commits, so each bump lands
+as an attributed replacement PR and the Dependabot PR is closed. An
+`astral-sh/ruff-pre-commit` replacement also raises the `ruff==` pin and
+relocks (`uv lock --upgrade-package ruff`). The steps are in
+[testing-quality.md](spec/amc/backend/testing-quality.md) § Local Review and
+Merge Gates.
 
 This repository does not refresh the command pack. Refreshes are initiated by
 the operator against the machine install.
