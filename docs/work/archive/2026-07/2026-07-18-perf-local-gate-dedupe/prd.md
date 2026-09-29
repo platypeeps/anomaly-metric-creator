@@ -135,15 +135,18 @@ it is not free to remove.
   hunks. This is pack-managed, so the in-repo action is documentation —
   record that `SD_AI_COMMAND_PACK_FULL_CHECK_PRISM=0` is the fast path and
   when it is appropriate. A behavior change belongs upstream in the pack.
-  Tracked upstream as
-  [sd-ai-command-pack#203](https://github.com/platypeeps/sd-ai-command-pack/issues/203).
+  Tracked upstream as sd-ai-command-pack issue #203, "Avoid redundant Prism
+  scans in full-check" (closed). The pack's GitHub issues are disabled, so the
+  old link no longer resolves; the sd database's `shadow` table keeps its title
+  and state.
 - **KB gate self-heal**: `.obsidian-kb/` is gitignored (`.gitignore:16-20`)
   and `--check` costs 0.24s, so regeneration has zero working-tree effect —
   yet `full-check.sh:442-445` exits 1 at step 7 of 14. This reproduces on
   any `git pull` that touches a spec source. Pack-managed, so propose the
   self-heal upstream and document the local regen command meanwhile.
-  Tracked upstream as
-  [sd-ai-command-pack#204](https://github.com/platypeeps/sd-ai-command-pack/issues/204).
+  Tracked upstream as sd-ai-command-pack issue #204, "Self-heal stale
+  generated Obsidian KB during full-check" (closed). The link is gone for the
+  same reason as #203's.
 - Do not edit pack-managed files in place. If a change there is necessary,
   the task is to file it upstream and record the pending change here.
 
