@@ -90,3 +90,7 @@ coverage.xml
 
 # `make check` environments (scripts/check.sh).
 .venv-check*/
+
+# Per-user Claude Code instructions (also in many global gitignores; listed
+# here so scripts/update_repomix does not add it to docs/repomix-map.md).
+CLAUDE.local.md

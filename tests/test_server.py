@@ -17,7 +17,7 @@ import urllib.request
 
 import pytest
 
-from anomaly_metric_creator import server, server_config, server_traces
+from anomaly_metric_creator import server, server_config, server_ops_render, server_traces
 
 REAL_CLIENT_SMOKE_ENV = "AMC_RUN_REAL_CLIENT_SMOKE"
 
@@ -228,7 +228,9 @@ def test_kubectl_logs_named_pod_takes_precedence_over_selector(amc, tmp_path, mo
     def fail_snapshot(_state):
         raise AssertionError("named pod logs should not build a resource snapshot")
 
-    monkeypatch.setattr(server, "resource_snapshot", fail_snapshot)
+    # The logs renderer reads resource_snapshot in its own leaf namespace;
+    # patching server.resource_snapshot would rebind only server.py's global.
+    monkeypatch.setattr(server_ops_render, "resource_snapshot", fail_snapshot)
 
     logs = server.run_command(
         state,

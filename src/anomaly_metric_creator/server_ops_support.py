@@ -3,7 +3,8 @@
 Stdlib + ``server_mutations``-only leaf extracted from ``server_ops.py`` (epic
 ``07-06-server-ops-decomposition`` step 4, Option A). Owns the release/chart
 identity constants and the snapshot-row / timestamp / string-coercion /
-list-resource-version accessors that both ``server_ops`` and the new
+list-resource-version accessors, plus the ``_find_named`` row lookup and the
+``_component_from_name`` pod-name resolver, that both ``server_ops`` and the new
 ``server_k8s_objects`` / ``server_k8s_tables`` leaves consume downward. It
 never imports ``server_ops`` (strict one-way dependency); ``server_ops``
 re-imports every public name here at the position ``DEFAULT_RELEASE``
@@ -85,3 +86,17 @@ def _preview(value: str, limit: int = 240) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3] + "..."
+
+
+def _component_from_name(name: str, components: tuple[str, ...]) -> str:
+    for component in components:
+        if name == component or name.startswith(component + "-"):
+            return component
+    return name.split("-", 1)[0] if name else ""
+
+
+def _find_named(rows: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+    for row in rows:
+        if row.get("name") == name:
+            return row
+    return None
