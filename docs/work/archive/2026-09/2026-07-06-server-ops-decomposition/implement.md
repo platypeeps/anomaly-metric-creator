@@ -164,6 +164,20 @@ cut.
   `resource_snapshot` monkeypatching bites. Decide the seam before planning
   this step.
 
+  **Corrected 2026-09-29 by a runtime closure audit (sd:258) — the block does
+  not hold.** The audit above counted annotation references. With annotations
+  excluded, `resource_snapshot`'s closure is 22 definitions / 615 lines and
+  uses no runtime dataclass: `SimulationState` appears only in signatures, so a
+  `TYPE_CHECKING` import suffices and no provider seam is needed. Cut 1 moved
+  that closure verbatim to `server_ops_snapshot.py` (684 lines); `server_ops`
+  re-imports every name at its original position, so the render cluster can
+  now import `resource_snapshot` one-way from the leaf. `server_ops.py`
+  **4,424 → 3,824** lines. The leaf is outside the mypy clean gate: it carries
+  4 pre-existing errors from the move, tracked on sd:261. Remaining cut order
+  (read renderers, manifest/patch, workload ops, explain/OpenAPI/objects, REST
+  dispatch, runtime state) and the `__all__` trim that closes the epic are
+  recorded as decisions on sd:258.
+
 - [x] Adjacent seam — **settled** (child `08-15-server-alias-getattr-delegation`).
   `server.py`'s hand-maintained alias block is gone: 227
   `NAME = _server_ops.NAME` lines replaced by a module `__getattr__` forwarding
