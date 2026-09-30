@@ -13,10 +13,8 @@ trace/fingerprint/redaction sink lives in the sibling leaf
 Strictly one-way: it imports only stdlib and the lower leaves
 (``server_mutations``, ``server_ops_parse``, ``server_ops_support``,
 ``server_k8s_objects``) and never imports ``server_ops`` at runtime.
-``server_ops`` re-imports every public name here at each member's original
-conceptual position, so the compatibility surface (``server.py``'s alias block,
-the k8s facades, ``server_mcp.py``) is unchanged and ``server_ops.__all__``
-membership stays byte-identical. The snapshot-bound dispatch spine
+``server_ops`` re-imports the names here that ``server.py``, the k8s facades,
+``server_mcp.py`` or the tests read through it. The snapshot-bound dispatch spine
 (``kubernetes_api_response`` and friends) lives in ``server_k8s_dispatch.py``,
 and ``_k8s_objects_for_resource`` and the OpenAPI *document* builders in
 ``server_k8s_resources.py`` — no member here reads the resource snapshot.

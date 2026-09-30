@@ -244,7 +244,16 @@ cut.
   `server.py:43-44`) that the alias assignments had been silently overwriting.
   `server.py` **2,208 → 2,078** lines; ratchet ceiling lowered in the same diff.
 
-- [ ] Step 7 — close-out, pending 6b.
+- [x] Step 7 — close-out: `__all__` trim (sd:258, decision #6774).
+  `server_ops.__all__` went from 227 names to the 23 public command, state and
+  REST entry points; private names left it. The re-import stubs dropped from
+  the ones callers read: `server.py`, the k8s/helm facades, `server_mcp.py`
+  and the tests. 192 unread stubs were removed. No module star-imports
+  `server_ops`, so the trim changes no import. `DEFAULT_CHART`,
+  `OpsComponentImpact`, `validate_ops_profiles` and
+  `ContinuousGenerationStatus` stay public in their leaves.
+  `server_ops.py` **1,024 → 512** lines, under the 800-line cap; its
+  `tools/check_module_size.py` ratchet entry is removed. The epic is closed.
 
 ## Validation Plan
 

@@ -193,6 +193,13 @@ rules hold that seam together, and both are enforced by
   predicate rather than repeating the condition is what keeps the guard and
   the listing from drifting apart.
 
+`server_ops` re-imports only the leaf names that `server.py`, the k8s/helm
+facades, `server_mcp.py` or the tests read through it, and its `__all__`
+lists the public command, state and REST entry points (23 names). No module
+star-imports `server_ops`. A new caller of a leaf name imports it from its
+leaf; add a `server_ops` re-import only for a name that must stay reachable
+as `server.<name>`.
+
 Lower-level server
 behavior belongs in focused modules: `server_ops.py` for the command entry
 points (`run_command`, `render_command`, the `_render_kubectl` dispatcher)
@@ -219,7 +226,7 @@ dataclasses, `_impact` / `_profile` builders, and `validate_ops_profiles`);
 (`ParsedCommand`, the flag/alias tables, `parse_command` and its
 `_parse_kubectl` / `_parse_helm` family sub-parsers, and the
 `command_fingerprint` / `guess_intent` / `_redact_*` fingerprint/redaction
-helpers), each re-imported by `server_ops.py` at the original block position
+helpers), with the names callers read re-imported by `server_ops.py`
 (one-way import, no reverse dependency); `server_command_render.py` for the
 `CommandResult` return dataclass and the general render/command primitives
 `_table` / `_is_dry_run` / `_unsupported` / `_exposed_active_scenarios` shared by

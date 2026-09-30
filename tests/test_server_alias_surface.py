@@ -70,7 +70,7 @@ def test_dunder_names_are_not_delegated():
 
     ``server.py`` defines no ``__all__``, so ``from ... import *`` publishes its
     public globals. An unguarded delegation would silently replace that with
-    ``server_ops``'s 227-name list, which is a star-import contract change that
+    ``server_ops``'s own ``__all__``, which is a star-import contract change that
     no test would otherwise notice.
     """
     assert hasattr(server_ops, "__all__")
