@@ -172,8 +172,9 @@ cut.
   that closure verbatim to `server_ops_snapshot.py` (684 lines); `server_ops`
   re-imports every name at its original position, so the render cluster can
   now import `resource_snapshot` one-way from the leaf. `server_ops.py`
-  **4,424 → 3,824** lines. The leaf is outside the mypy clean gate: it carries
-  4 pre-existing errors from the move, tracked on sd:261. Remaining cut order
+  **4,424 → 3,824** lines. The leaf first stayed outside the mypy clean gate
+  with 4 errors carried over from the move; a sd:261 follow-up annotated the
+  health and workload-metadata dicts and enrolled it. Remaining cut order
   (read renderers, manifest/patch, workload ops, explain/OpenAPI/objects, REST
   dispatch, runtime state) and the `__all__` trim that closes the epic are
   recorded as decisions on sd:258.
