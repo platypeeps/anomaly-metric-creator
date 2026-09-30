@@ -264,12 +264,18 @@ manifest-target resolution, and the generic resource-row builders; it imports
 `_filter_snapshot_rows` from `server_ops_render` (read leaf below manifest
 leaf, never the reverse), plus `server_command_render` / `server_k8s_api` /
 `server_k8s_objects` / `server_mutations` / `server_ops_parse` /
-`server_ops_payloads` / `server_ops_support`. The dispatch spine
+`server_ops_payloads` / `server_ops_support`. `server_ops_render_workloads.py`
+owns the workload operations (`scale`, `delete`, the six `rollout`
+subcommands, `wait`, `exec`, `port-forward`) and their rollout and replica
+helpers, including `_normalized_resource_prefix`; it imports
+`resource_snapshot` from `server_ops_snapshot` and `_mutation_snapshot_kind`
+from `server_ops_render_manifest` (manifest leaf below workloads leaf, never
+the reverse), plus `server_command_render` / `server_mutations` /
+`server_ops_parse` / `server_ops_support`. The dispatch spine
 (`kubernetes_api_response`, the mutating/group/core/resource dispatchers,
 `_k8s_objects_for_resource`, `_k8s_endpointslice`, `k8s_watch_objects`,
-`record_kubernetes_api_call`, the OpenAPI document builders) and the workload
-renderers (`_render_scale`, `_render_delete`, rollout, wait, exec,
-port-forward) still live in `server_ops.py`; they move the same way, and a moved caller's monkeypatch
+`record_kubernetes_api_call`, the OpenAPI document builders) still lives in
+`server_ops.py`; it moves the same way, and a moved caller's monkeypatch
 target moves with it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
 OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_path`,
 `_format_explain` and its recursive-field/type-label helpers) — the only leaf in
@@ -301,6 +307,7 @@ Sources:
 `src/anomaly_metric_creator/server_ops_snapshot.py`;
 `src/anomaly_metric_creator/server_ops_render.py`;
 `src/anomaly_metric_creator/server_ops_render_manifest.py`;
+`src/anomaly_metric_creator/server_ops_render_workloads.py`;
 `src/anomaly_metric_creator/server_k8s_objects.py`;
 `src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;
