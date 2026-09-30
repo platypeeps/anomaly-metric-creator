@@ -3,6 +3,7 @@
 Stdlib + ``server_mutations``-only leaf extracted from ``server_ops.py`` (epic
 ``07-06-server-ops-decomposition`` step 4, Option A). Owns the release/chart
 identity constants and the snapshot-row / timestamp / string-coercion /
+dict-narrowing (``_dict_or_empty``) /
 list-resource-version accessors, plus the ``_find_named`` row lookup and the
 ``_component_from_name`` pod-name resolver, that both ``server_ops`` and the new
 ``server_k8s_objects`` / ``server_k8s_tables`` leaves consume downward. It
@@ -68,6 +69,11 @@ def _parse_optional_timestamp(value: str | None) -> _dt.datetime | None:
     with contextlib.suppress(ValueError):
         return _parse_user_timestamp(value)
     return None
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    """Return ``value`` itself when it is a dict, else a new empty dict."""
+    return value if isinstance(value, dict) else {}
 
 
 def _string_dict(value: Any) -> dict[str, str]:

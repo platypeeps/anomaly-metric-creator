@@ -25,7 +25,7 @@ from .server_ops_parse import _first_flag_value, _flag_values, _normalize_kind
 from .server_ops_payloads import _apply_json_patch, _load_manifest_documents
 from .server_ops_render import _filter_snapshot_rows
 from .server_ops_snapshot import _node_rows, _stable_cluster_ip, resource_snapshot
-from .server_ops_support import _find_named, _string_dict
+from .server_ops_support import _dict_or_empty, _find_named, _string_dict
 
 if TYPE_CHECKING:
     from .server_ops import SimulationState
@@ -203,7 +203,7 @@ def _patch_base_payload(state: SimulationState, parsed: ParsedCommand) -> dict[s
         payload["spec"] = {
             "type": row.get("type", "ClusterIP"),
             "clusterIP": row.get("cluster_ip"),
-            "selector": row.get("selector") if isinstance(row.get("selector"), dict) else {},
+            "selector": _dict_or_empty(row.get("selector")),
             "ports": [{"port": row.get("port", 8080)}],
         }
     elif snapshot_kind in {"deployments", "statefulsets"}:
@@ -364,7 +364,7 @@ def _manifest_apply_target(
     index: int,
 ) -> tuple[str, str, str, dict[str, Any], str] | CommandResult:
     raw_kind = str(payload.get("kind") or "").strip()
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    metadata = _dict_or_empty(payload.get("metadata"))
     name = str(metadata.get("name") or "").strip()
     if not raw_kind or not name:
         return CommandResult(
@@ -436,9 +436,9 @@ def _generic_resource_row(
     payload: dict[str, Any],
     parsed: ParsedCommand | None = None,
 ) -> dict[str, Any]:
-    spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    string_data = payload.get("stringData") if isinstance(payload.get("stringData"), dict) else {}
+    spec = _dict_or_empty(payload.get("spec"))
+    data = _dict_or_empty(payload.get("data"))
+    string_data = _dict_or_empty(payload.get("stringData"))
     base = _generic_resource_metadata(state, kind, name, payload=payload, parsed=parsed)
 
     def row(values: dict[str, Any]) -> dict[str, Any]:
@@ -456,7 +456,7 @@ def _generic_resource_row(
         service_type = str(spec.get("type") or "ClusterIP")
         ports = spec.get("ports") if isinstance(spec.get("ports"), list) else []
         port = ports[0].get("port", 8080) if ports and isinstance(ports[0], dict) else 8080
-        selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
+        selector = _dict_or_empty(spec.get("selector"))
         return row({
             "name": name,
             "type": service_type,
@@ -486,7 +486,7 @@ def _generic_resource_row(
     if kind == "hpa":
         min_replicas = int(spec.get("minReplicas", 1) or 1)
         max_replicas = int(spec.get("maxReplicas", 8) or 8)
-        target = spec.get("scaleTargetRef") if isinstance(spec.get("scaleTargetRef"), dict) else {}
+        target = _dict_or_empty(spec.get("scaleTargetRef"))
         target_name = str(target.get("name") or name)
         return row({
             "name": name,
@@ -550,17 +550,17 @@ def _generic_resource_metadata(
     payload: dict[str, Any],
     parsed: ParsedCommand | None = None,
 ) -> dict[str, Any]:
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
+    metadata = _dict_or_empty(payload.get("metadata"))
+    spec = _dict_or_empty(payload.get("spec"))
     namespace = str(metadata.get("namespace") or (parsed.namespace if parsed else "") or state.namespace)
     if namespace == "*":
         namespace = state.namespace
     labels = _string_dict(metadata.get("labels"))
     annotations = _string_dict(metadata.get("annotations"))
-    selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
-    match_labels = selector.get("matchLabels") if isinstance(selector.get("matchLabels"), dict) else {}
-    template = spec.get("template") if isinstance(spec.get("template"), dict) else {}
-    template_metadata = template.get("metadata") if isinstance(template.get("metadata"), dict) else {}
+    selector = _dict_or_empty(spec.get("selector"))
+    match_labels = _dict_or_empty(selector.get("matchLabels"))
+    template = _dict_or_empty(spec.get("template"))
+    template_metadata = _dict_or_empty(template.get("metadata"))
     template_labels = _string_dict(template_metadata.get("labels"))
     if kind in {"deployments", "statefulsets", "daemonsets"}:
         labels = {**_k8s_workload_labels(name), **labels}

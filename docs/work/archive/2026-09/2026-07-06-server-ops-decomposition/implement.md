@@ -194,8 +194,10 @@ cut.
   and its payload builders, diff, apply, create, manifest-target resolution,
   the generic resource-row builders, `_MUTATION_SNAPSHOT_KINDS`) moved
   verbatim to `server_ops_render_manifest.py`. It imports
-  `_filter_snapshot_rows` one-way from the read leaf. It stays outside the
-  mypy clean gate for now: 33 errors moved with it, tracked on sd:261.
+  `_filter_snapshot_rows` one-way from the read leaf. It first stayed outside
+  the mypy clean gate with 33 errors carried over from the move; a sd:261
+  follow-up routed the `isinstance(x.get(k), dict)` narrowing through a new
+  `server_ops_support._dict_or_empty` helper and enrolled it.
 
   **Cut 4 (sd:258):** the workload-operation renderers (18 definitions:
   scale, delete, the six rollout subcommands, wait, exec, port-forward, and
