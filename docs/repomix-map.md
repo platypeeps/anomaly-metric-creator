@@ -572,6 +572,7 @@ src/
     server_helm.py
     server_k8s_api_trace.py
     server_k8s_api.py
+    server_k8s_dispatch.py
     server_k8s_objects.py
     server_k8s_resources.py
     server_k8s_tables.py
