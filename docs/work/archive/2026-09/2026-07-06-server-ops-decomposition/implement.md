@@ -178,6 +178,17 @@ cut.
   dispatch, runtime state) and the `__all__` trim that closes the epic are
   recorded as decisions on sd:258.
 
+  **Cut 2 (sd:258):** the read-only kubectl renderers (22 definitions: get,
+  watch, get all, describe, the logs family, top, version, api-versions,
+  api-resources, cluster-info, and their row filters) moved verbatim to
+  `server_ops_render.py`, which is in the mypy clean gate. The shared helpers
+  `_not_found` moved to `server_command_render` and `_find_named` /
+  `_component_from_name` to `server_ops_support`, so the later mutating-render
+  leaves need not import the read leaf. `tests/test_server.py`'s named-pod
+  logs test now patches `server_ops_render.resource_snapshot`; its old
+  `server.resource_snapshot` patch rebound only `server.py`'s global and
+  asserted nothing.
+
 - [x] Adjacent seam — **settled** (child `08-15-server-alias-getattr-delegation`).
   `server.py`'s hand-maintained alias block is gone: 227
   `NAME = _server_ops.NAME` lines replaced by a module `__getattr__` forwarding

@@ -5,7 +5,7 @@ from :mod:`server_ops_parse`, and re-exports ``_format_dt`` from
 :mod:`server_mutations` (the byte-identical canonical copy). It holds the
 ``CommandResult`` dataclass every command renderer returns and the general
 render/command helpers (``_table``, ``_is_dry_run``, ``_unsupported``,
-``_exposed_active_scenarios``) shared by the command renderers and the future
+``_exposed_active_scenarios``, ``_not_found``) shared by the command renderers and the future
 ``server_helm_impl`` leaf.
 
 The module never imports :mod:`server_ops` (one-way rule). ``SimulationState``
@@ -88,3 +88,13 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
     for row in rows:
         lines.append("  ".join(str(cell).ljust(widths[i]) for i, cell in enumerate(row)))
     return "\n".join(lines) + "\n"
+
+
+def _not_found(kind: str, name: str) -> CommandResult:
+    return CommandResult(
+        1,
+        "",
+        f"Error from server (NotFound): {kind} \"{name}\" not found\n",
+        "supported",
+        "kubectl.not_found",
+    )

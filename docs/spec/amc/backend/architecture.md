@@ -247,14 +247,23 @@ namespace and mutation-row appliers, component health/impact/event helpers,
 `server_mutations` / `server_ops_profiles` / `server_ops_support` with
 `SimulationState` under a `TYPE_CHECKING` guard. `server_ops` re-imports every
 name, so a caller left in `server_ops` still resolves `resource_snapshot` in
-`server_ops`'s namespace, where `tests/test_server.py` monkeypatches it. The
-dispatch spine (`kubernetes_api_response`, the mutating/group/core/resource
-dispatchers, `_k8s_objects_for_resource`, `_k8s_endpointslice`,
-`k8s_watch_objects`, `record_kubernetes_api_call`, the OpenAPI document
-builders) and the render dispatch (`_render_get`, `_render_describe`,
-`_render_scale`, `_render_delete`, `_render_patch`, `_render_diff`) still live
-in `server_ops.py`; they can now move by importing `resource_snapshot` from the
-leaf, and a moved caller's monkeypatch target moves with it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
+`server_ops`'s namespace, where `tests/test_server.py` monkeypatches it.
+`server_ops_render.py` owns the read-only kubectl renderers (`get` with
+`--watch` and `get all`, `describe`, the `logs` family, `top`, `version`,
+`api-versions`, `api-resources`, `cluster-info`) and their row filters,
+importing `resource_snapshot` one-way from `server_ops_snapshot` plus
+`server_command_render` / `server_k8s_api` / `server_mutations` /
+`server_ops_support`; a test that stubs the snapshot for these renderers
+patches `server_ops_render.resource_snapshot`. The shared `_not_found` helper
+lives in `server_command_render`, and `_find_named` / `_component_from_name`
+in `server_ops_support`, so later render leaves reach them without importing
+each other. The dispatch spine (`kubernetes_api_response`, the
+mutating/group/core/resource dispatchers, `_k8s_objects_for_resource`,
+`_k8s_endpointslice`, `k8s_watch_objects`, `record_kubernetes_api_call`, the
+OpenAPI document builders) and the mutating renderers (`_render_scale`,
+`_render_delete`, `_render_patch`, `_render_diff`, rollout, apply) still live
+in `server_ops.py`; they move the same way, and a moved caller's monkeypatch
+target moves with it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
 OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_path`,
 `_format_explain` and its recursive-field/type-label helpers) — the only leaf in
 the package with no intra-package import at all — while the state-bound
@@ -283,6 +292,7 @@ Sources:
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_ops_support.py`;
 `src/anomaly_metric_creator/server_ops_snapshot.py`;
+`src/anomaly_metric_creator/server_ops_render.py`;
 `src/anomaly_metric_creator/server_k8s_objects.py`;
 `src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;
