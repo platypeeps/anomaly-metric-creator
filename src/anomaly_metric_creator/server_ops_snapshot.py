@@ -114,7 +114,7 @@ def resource_snapshot(state: SimulationState) -> dict[str, list[dict[str, Any]]]
             if mutation.deleted
         }
         deleted_pods = set(state.mutations.deleted_pods)
-        workload_metadata = {
+        workload_metadata: dict[str, dict[str, Any]] = {
             name: {
                 "generation": mutation.generation,
                 "observed_generation": mutation.observed_generation,
@@ -457,7 +457,7 @@ _POD_STATUS_PRIORITY = {
 
 def _component_health(state: SimulationState, component: str) -> dict[str, Any]:
     replicas = _replica_count(state, component)
-    health = {
+    health: dict[str, Any] = {
         "pod_status": "Running",
         "deployment_status": "Healthy",
         "ready": "1/1",
