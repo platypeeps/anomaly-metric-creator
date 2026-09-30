@@ -190,6 +190,13 @@ cut.
   `server.resource_snapshot` patch rebound only `server.py`'s global and
   asserted nothing.
 
+  **Cut 3 (sd:258):** the manifest/patch renderers (16 definitions: patch
+  and its payload builders, diff, apply, create, manifest-target resolution,
+  the generic resource-row builders, `_MUTATION_SNAPSHOT_KINDS`) moved
+  verbatim to `server_ops_render_manifest.py`. It imports
+  `_filter_snapshot_rows` one-way from the read leaf. It stays outside the
+  mypy clean gate for now: 33 errors moved with it, tracked on sd:261.
+
 - [x] Adjacent seam — **settled** (child `08-15-server-alias-getattr-delegation`).
   `server.py`'s hand-maintained alias block is gone: 227
   `NAME = _server_ops.NAME` lines replaced by a module `__getattr__` forwarding
