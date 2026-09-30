@@ -7,9 +7,9 @@ per-resource response builders, ``_k8s_mutated_object``,
 ``k8s_watch_objects`` and ``record_kubernetes_api_call``. It reads the
 overlay-aware ``resource_snapshot()`` from ``server_ops_snapshot`` and the
 object builders from ``server_k8s_resources``; a test that stubs either for
-these handlers patches it here. ``server_ops`` re-imports every name at its
-original position, so the historic ``server_ops.<name>`` and
-``server.<name>`` surfaces stay stable. This module never imports
+these handlers patches it here. ``server_ops`` re-imports the names its callers
+read through it, so the ``server_ops.<name>`` and ``server.<name>``
+surfaces they use stay stable. This module never imports
 ``server_ops`` at runtime; ``SimulationState`` is a type-only import.
 """
 

@@ -8,9 +8,9 @@ schema lookup), the ``/openapi/v2`` and ``/openapi/v3`` document builders,
 ``resource_snapshot()`` from ``server_ops_snapshot``; a test that stubs the
 snapshot for these builders patches it here. The pure explain formatters stay
 in ``server_ops_explain`` and the per-kind object builders in
-``server_k8s_objects``. ``server_ops`` re-imports every name at its original
-position, so the historic ``server_ops.<name>`` and ``server.<name>``
-surfaces stay stable. This module never imports ``server_ops`` at runtime;
+``server_k8s_objects``. ``server_ops`` re-imports the names its callers
+read through it, so the ``server_ops.<name>`` and ``server.<name>``
+surfaces they use stay stable. This module never imports ``server_ops`` at runtime;
 ``SimulationState`` is a type-only import.
 """
 

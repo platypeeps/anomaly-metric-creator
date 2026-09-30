@@ -5,9 +5,9 @@ its ``build_state()`` constructor, the ``SimulationClock``, the
 ``ContinuousGenerationStatus`` and ``RefusalCounters`` records,
 ``load_anomaly_rows()``, and the operator error sink
 (``_record_server_error`` and its traceback helpers) including the
-continuous-generation failure recorder. ``server_ops`` re-imports every name
-at its original position, so the historic ``server_ops.<name>`` and
-``server.<name>`` surfaces stay stable, and the leaves that name
+continuous-generation failure recorder. ``server_ops`` re-imports the names its callers
+read through it, so the ``server_ops.<name>`` and ``server.<name>``
+surfaces they use stay stable, and the leaves that name
 ``SimulationState`` only in annotations keep their type-only import from
 ``server_ops``. This module never imports ``server_ops``.
 """

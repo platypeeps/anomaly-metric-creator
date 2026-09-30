@@ -109,24 +109,6 @@ RATCHET: dict[str, tuple[int, str]] = {
         "permanent: one ordered data-only registry, no validation or runtime "
         "orchestration (see architecture.md)",
     ),
-    "server_ops.py": (
-        1024,
-        "debt: 07-06-server-ops-decomposition, extracting leaves until under cap; "
-        "+10 from 06-29-persisted-server-mutation-state for the "
-        "--persist-mutations kwarg and the conditional overlay construction "
-        "inside the existing build_state() call, a non-separable addition; "
-        "-600 from sd:258 cut 1, which moved the resource_snapshot() closure "
-        "to the server_ops_snapshot.py leaf; -676 from sd:258 cut 2, which "
-        "moved the read-only kubectl renderers to server_ops_render.py; -545 "
-        "from sd:258 cut 3, which moved the manifest/patch renderers to "
-        "server_ops_render_manifest.py; -265 from sd:258 cut 4, which moved "
-        "the workload-operation renderers to server_ops_render_workloads.py; "
-        "-341 from sd:258 cut 5, which moved the explain/OpenAPI/object "
-        "builders to server_k8s_resources.py; -506 from sd:258 cut 6, which "
-        "moved the Kubernetes REST dispatch spine to server_k8s_dispatch.py; "
-        "-467 from sd:258 cut 7, which moved the runtime state to "
-        "server_ops_state.py",
-    ),
     "server.py": (
         1985,
         "debt: HTTP serve facade, not yet decomposed; -130 from "

@@ -5,9 +5,9 @@ This leaf owns ``kubectl get`` (including ``--watch`` and ``get all``),
 ``api-resources`` and ``cluster-info``, plus their row filters and logs
 option helpers. Each renderer reads the overlay-aware ``resource_snapshot()``
 from ``server_ops_snapshot``; a test that stubs the snapshot for these
-renderers patches it here. ``server_ops`` re-imports every name at its
-original position, so the historic ``server_ops.<name>`` and
-``server.<name>`` surfaces stay stable. This module never imports
+renderers patches it here. ``server_ops`` re-imports the names its callers
+read through it, so the ``server_ops.<name>`` and ``server.<name>``
+surfaces they use stay stable. This module never imports
 ``server_ops`` at runtime; ``SimulationState`` is a type-only import.
 """
 

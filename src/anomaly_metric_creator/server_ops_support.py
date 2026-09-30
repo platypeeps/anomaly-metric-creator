@@ -8,9 +8,8 @@ list-resource-version accessors, plus the ``_find_named`` row lookup and the
 ``_component_from_name`` pod-name resolver, that both ``server_ops`` and the new
 ``server_k8s_objects`` / ``server_k8s_tables`` leaves consume downward. It
 never imports ``server_ops`` (strict one-way dependency); ``server_ops``
-re-imports every public name here at the position ``DEFAULT_RELEASE``
-originally held, so the compatibility surface (``server.py``'s alias block,
-the k8s facades, ``server_mcp.py``) is unchanged. ``SimulationState`` appears
+re-imports the names here that its callers read through it (``server.py``,
+the k8s facades, ``server_mcp.py`` and the tests). ``SimulationState`` appears
 only in annotations, which ``from __future__ import annotations`` stringizes,
 so no runtime import of it is needed.
 """
