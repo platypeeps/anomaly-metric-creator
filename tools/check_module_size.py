@@ -110,14 +110,16 @@ RATCHET: dict[str, tuple[int, str]] = {
         "orchestration (see architecture.md)",
     ),
     "server_ops.py": (
-        3148,
+        2603,
         "debt: 07-06-server-ops-decomposition, extracting leaves until under cap; "
         "+10 from 06-29-persisted-server-mutation-state for the "
         "--persist-mutations kwarg and the conditional overlay construction "
         "inside the existing build_state() call, a non-separable addition; "
         "-600 from sd:258 cut 1, which moved the resource_snapshot() closure "
         "to the server_ops_snapshot.py leaf; -676 from sd:258 cut 2, which "
-        "moved the read-only kubectl renderers to server_ops_render.py",
+        "moved the read-only kubectl renderers to server_ops_render.py; -545 "
+        "from sd:258 cut 3, which moved the manifest/patch renderers to "
+        "server_ops_render_manifest.py",
     ),
     "server.py": (
         1985,

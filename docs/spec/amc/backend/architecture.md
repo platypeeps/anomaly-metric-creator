@@ -257,12 +257,19 @@ importing `resource_snapshot` one-way from `server_ops_snapshot` plus
 patches `server_ops_render.resource_snapshot`. The shared `_not_found` helper
 lives in `server_command_render`, and `_find_named` / `_component_from_name`
 in `server_ops_support`, so later render leaves reach them without importing
-each other. The dispatch spine (`kubernetes_api_response`, the
-mutating/group/core/resource dispatchers, `_k8s_objects_for_resource`,
-`_k8s_endpointslice`, `k8s_watch_objects`, `record_kubernetes_api_call`, the
-OpenAPI document builders) and the mutating renderers (`_render_scale`,
-`_render_delete`, `_render_patch`, `_render_diff`, rollout, apply) still live
-in `server_ops.py`; they move the same way, and a moved caller's monkeypatch
+each other. `server_ops_render_manifest.py` owns `kubectl patch` (merge and
+RFC 6902 JSON patch payloads), `diff`, `apply -f` and `create`, the
+manifest-target resolution, and the generic resource-row builders; it imports
+`resource_snapshot` from `server_ops_snapshot` and the one shared row filter
+`_filter_snapshot_rows` from `server_ops_render` (read leaf below manifest
+leaf, never the reverse), plus `server_command_render` / `server_k8s_api` /
+`server_k8s_objects` / `server_mutations` / `server_ops_parse` /
+`server_ops_payloads` / `server_ops_support`. The dispatch spine
+(`kubernetes_api_response`, the mutating/group/core/resource dispatchers,
+`_k8s_objects_for_resource`, `_k8s_endpointslice`, `k8s_watch_objects`,
+`record_kubernetes_api_call`, the OpenAPI document builders) and the workload
+renderers (`_render_scale`, `_render_delete`, rollout, wait, exec,
+port-forward) still live in `server_ops.py`; they move the same way, and a moved caller's monkeypatch
 target moves with it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
 OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_path`,
 `_format_explain` and its recursive-field/type-label helpers) — the only leaf in
@@ -293,6 +300,7 @@ Sources:
 `src/anomaly_metric_creator/server_ops_support.py`;
 `src/anomaly_metric_creator/server_ops_snapshot.py`;
 `src/anomaly_metric_creator/server_ops_render.py`;
+`src/anomaly_metric_creator/server_ops_render_manifest.py`;
 `src/anomaly_metric_creator/server_k8s_objects.py`;
 `src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;
