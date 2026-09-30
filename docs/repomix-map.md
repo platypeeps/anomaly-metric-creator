@@ -582,6 +582,7 @@ src/
     server_ops_payloads.py
     server_ops_profiles.py
     server_ops_render_manifest.py
+    server_ops_render_workloads.py
     server_ops_render.py
     server_ops_snapshot.py
     server_ops_support.py

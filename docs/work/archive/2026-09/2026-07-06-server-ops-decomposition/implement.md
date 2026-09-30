@@ -197,6 +197,13 @@ cut.
   `_filter_snapshot_rows` one-way from the read leaf. It stays outside the
   mypy clean gate for now: 33 errors moved with it, tracked on sd:261.
 
+  **Cut 4 (sd:258):** the workload-operation renderers (18 definitions:
+  scale, delete, the six rollout subcommands, wait, exec, port-forward, and
+  their rollout and replica helpers, including `_normalized_resource_prefix`)
+  moved verbatim to `server_ops_render_workloads.py`, which is in the mypy
+  clean gate. It imports `_mutation_snapshot_kind` one-way from the manifest
+  leaf.
+
 - [x] Adjacent seam — **settled** (child `08-15-server-alias-getattr-delegation`).
   `server.py`'s hand-maintained alias block is gone: 227
   `NAME = _server_ops.NAME` lines replaced by a module `__getattr__` forwarding
