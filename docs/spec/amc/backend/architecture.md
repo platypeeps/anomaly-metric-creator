@@ -195,8 +195,10 @@ rules hold that seam together, and both are enforced by
 
 Lower-level server
 behavior belongs in focused modules: `server_ops.py` for simulation state,
-command rendering, the `_k8s_objects_for_resource` / `_k8s_table` dispatchers,
-`resource_snapshot()`, and Helm Secret encoding;
+command rendering, the REST dispatch spine, and Helm Secret encoding, with
+`resource_snapshot()`, the kubectl renderers and the snapshot-bound
+Kubernetes resource builders in the `server_ops_*` / `server_k8s_resources`
+leaves below;
 `server_ops_support.py` for the pure lower leaf shared downward by the ops and
 k8s surfaces (`DEFAULT_RELEASE` / `DEFAULT_CHART`, the snapshot-row /
 timestamp / string-coercion / list-resource-version accessors, and `_preview`,
@@ -271,16 +273,25 @@ helpers, including `_normalized_resource_prefix`; it imports
 `resource_snapshot` from `server_ops_snapshot` and `_mutation_snapshot_kind`
 from `server_ops_render_manifest` (manifest leaf below workloads leaf, never
 the reverse), plus `server_command_render` / `server_mutations` /
-`server_ops_parse` / `server_ops_support`. The dispatch spine
-(`kubernetes_api_response`, the mutating/group/core/resource dispatchers,
-`_k8s_objects_for_resource`, `_k8s_endpointslice`, `k8s_watch_objects`,
-`record_kubernetes_api_call`, the OpenAPI document builders) still lives in
-`server_ops.py`; it moves the same way, and a moved caller's monkeypatch
+`server_ops_parse` / `server_ops_support`. `server_k8s_resources.py` owns
+the snapshot-bound Kubernetes resource builders: `kubectl explain`
+(`_render_explain`, `_explain_schema_for_kind`,
+`_EXPLAIN_RESOURCE_DESCRIPTIONS`), the `/openapi/v2` and `/openapi/v3`
+document builders, `_minimal_k8s_object`, the `_k8s_objects_for_resource`
+dispatcher and `_k8s_endpointslice`. It imports `resource_snapshot` from
+`server_ops_snapshot` plus `server_command_render` / `server_helm_impl` /
+`server_k8s_api` / `server_k8s_objects` / `server_ops_explain` /
+`server_ops_parse` / `server_ops_support`; a test that stubs the snapshot
+for these builders patches `server_k8s_resources.resource_snapshot`. The
+dispatch spine (`kubernetes_api_response`, the mutating/group/core/resource
+dispatchers, `k8s_watch_objects`, `record_kubernetes_api_call`) still lives
+in `server_ops.py`; it moves the same way, and a moved caller's monkeypatch
 target moves with it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
 OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_path`,
 `_format_explain` and its recursive-field/type-label helpers) — the only leaf in
 the package with no intra-package import at all — while the state-bound
-`_render_explain` / `_explain_schema_for_kind` stay behind and call into it;
+`_render_explain` / `_explain_schema_for_kind` in `server_k8s_resources`
+call into it;
 and `server_ops_payloads.py` for declarative request-payload handling (the
 RFC 6902 JSON Patch `_apply_json_patch` plus its RFC 6901 JSON Pointer
 `_json_pointer_parts` / `_set_json_pointer` / `_remove_json_pointer`
@@ -308,6 +319,7 @@ Sources:
 `src/anomaly_metric_creator/server_ops_render.py`;
 `src/anomaly_metric_creator/server_ops_render_manifest.py`;
 `src/anomaly_metric_creator/server_ops_render_workloads.py`;
+`src/anomaly_metric_creator/server_k8s_resources.py`;
 `src/anomaly_metric_creator/server_k8s_objects.py`;
 `src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;

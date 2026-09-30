@@ -8,9 +8,8 @@ projected Kubernetes object into an OpenAPI-shaped schema and render the
 They are entirely free of simulation state: the closure audit found no
 reference to ``SimulationState`` or ``resource_snapshot``, and no
 intra-package import at all. ``_render_explain`` and
-``_explain_schema_for_kind`` stay in ``server_ops`` (they bind state) and
-call into here through the re-import stub at this block's original
-position.
+``_explain_schema_for_kind`` bind state and live in ``server_k8s_resources``,
+which imports from here directly.
 """
 
 from __future__ import annotations

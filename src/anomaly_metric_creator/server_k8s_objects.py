@@ -5,10 +5,10 @@ step 4). Owns the per-kind object-dict builders and their metadata / owner /
 label / container-state / timestamp / pod-ip helpers. Reads the shared
 snapshot/label/timestamp/string accessors and the release identity constant
 downward from ``server_ops_support``; the ``_k8s_objects_for_resource``
-dispatcher, ``_helm_secret_objects``, and the snapshot-coupled
-``_k8s_endpointslice`` builder (which resolves the full ``resource_snapshot``)
-stay in ``server_ops`` (steps 5 / 3) and call these builders through
-``server_ops``'s re-import. Never imports ``server_ops`` (one-way).
+dispatcher and the snapshot-coupled ``_k8s_endpointslice`` builder (which
+resolves the full ``resource_snapshot``) live in ``server_k8s_resources``, and
+``_helm_secret_objects`` in ``server_helm_impl``; they call these builders
+directly. Never imports ``server_ops`` (one-way).
 ``SimulationState`` is annotation-only under
 ``from __future__ import annotations``.
 """

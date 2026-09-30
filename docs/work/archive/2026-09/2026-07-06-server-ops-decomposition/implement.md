@@ -206,6 +206,14 @@ cut.
   clean gate. It imports `_mutation_snapshot_kind` one-way from the manifest
   leaf.
 
+  **Cut 5 (sd:258):** the snapshot-bound Kubernetes resource builders (11
+  definitions: `kubectl explain` and its per-kind schema lookup and
+  descriptions, the `/openapi/v2` and `/openapi/v3` document builders,
+  `_minimal_k8s_object`, `_k8s_objects_for_resource`, `_k8s_endpointslice`)
+  moved verbatim to `server_k8s_resources.py`, which is in the mypy clean
+  gate. `tests/test_server.py`'s OpenAPI snapshot-reuse test now patches
+  `server_k8s_resources.resource_snapshot`, the binding the builders read.
+
 - [x] Adjacent seam — **settled** (child `08-15-server-alias-getattr-delegation`).
   `server.py`'s hand-maintained alias block is gone: 227
   `NAME = _server_ops.NAME` lines replaced by a module `__getattr__` forwarding
