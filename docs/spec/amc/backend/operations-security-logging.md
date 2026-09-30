@@ -193,7 +193,7 @@ the trust boundary and the remote-bind decision. Sources: `README.md`;
 `tests/test_server_hardening.py`; `tests/test_server.py`.
 
 Those DoS-bound refusals are counted so saturation is observable by default
-(A-075). `RefusalCounters` (server_ops.py) is a thread-safe tally shared with
+(A-075). `RefusalCounters` (server_ops_state.py) is a thread-safe tally shared with
 `_BoundedThreadingHTTPServer`: the worker-cap `503` (`_refuse_saturated`, which
 fires before any handler exists), both SSE-ceiling `503`s (the app streams via
 `_with_sse_slot` and the Kubernetes watch path), and the rate-limit `429`
@@ -208,7 +208,7 @@ condition and `/v1/state.refusals` carries the live count thereafter. The
 counter kinds are fixed strings with no scenario content, so `/v1/state` staying
 eval-hidden is a wall property of that endpoint, not of the counts. Sources:
 `src/anomaly_metric_creator/server.py`;
-`src/anomaly_metric_creator/server_ops.py`; `tests/test_server.py`;
+`src/anomaly_metric_creator/server_ops_state.py`; `tests/test_server.py`;
 `tests/test_serve_main_wiring.py`.
 
 `--cors-allow-origin` is the only CORS enablement path. Preflight requests are

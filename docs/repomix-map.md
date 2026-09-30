@@ -587,6 +587,7 @@ src/
     server_ops_render_workloads.py
     server_ops_render.py
     server_ops_snapshot.py
+    server_ops_state.py
     server_ops_support.py
     server_ops.py
     server_traces.py

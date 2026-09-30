@@ -223,6 +223,13 @@ cut.
   stays outside the mypy clean gate for now: 3 errors moved with it, tracked
   on sd:261.
 
+  **Cut 7 (sd:258):** the runtime state (13 definitions: `SimulationState`,
+  `build_state`, `SimulationClock`, `ContinuousGenerationStatus`,
+  `RefusalCounters`, `load_anomaly_rows`, the error sink and its traceback
+  helpers, `_record_continuous_generation_failure`) moved verbatim to
+  `server_ops_state.py`, which is in the mypy clean gate. `server_ops.py` now
+  holds only the command entry points and the re-export surface.
+
 - [x] Adjacent seam — **settled** (child `08-15-server-alias-getattr-delegation`).
   `server.py`'s hand-maintained alias block is gone: 227
   `NAME = _server_ops.NAME` lines replaced by a module `__getattr__` forwarding

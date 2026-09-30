@@ -194,11 +194,12 @@ rules hold that seam together, and both are enforced by
   the listing from drifting apart.
 
 Lower-level server
-behavior belongs in focused modules: `server_ops.py` for simulation state,
-command rendering, and Helm Secret encoding, with `resource_snapshot()`,
-the kubectl renderers, the snapshot-bound Kubernetes resource builders and
-the REST dispatch spine in the `server_ops_*` / `server_k8s_resources` /
-`server_k8s_dispatch` leaves below;
+behavior belongs in focused modules: `server_ops.py` for the command entry
+points (`run_command`, `render_command`, the `_render_kubectl` dispatcher)
+and the compatibility re-export surface, with the runtime state,
+`resource_snapshot()`, the kubectl renderers, the snapshot-bound Kubernetes
+resource builders and the REST dispatch spine in the `server_ops_*` /
+`server_k8s_resources` / `server_k8s_dispatch` leaves below;
 `server_ops_support.py` for the pure lower leaf shared downward by the ops and
 k8s surfaces (`DEFAULT_RELEASE` / `DEFAULT_CHART`, the snapshot-row /
 timestamp / string-coercion / list-resource-version accessors, and `_preview`,
@@ -292,10 +293,15 @@ the `server_ops_render*` leaves, `server_ops_snapshot`, `server_k8s_api`,
 `server_k8s_api_trace`, `server_k8s_objects`, `server_k8s_tables`,
 `server_mutations`, `server_ops_support` and `server_traces`. `server.py`
 calls `kubernetes_api_post_response` / `kubernetes_api_mutating_response` as
-bare globals, so a test that stubs them patches `server.<name>`. The runtime
-state (`SimulationState`, `build_state`, the clock, refusal counters and
-error sink) still lives in `server_ops.py`; it moves the same way, and a
-moved caller's monkeypatch target moves with it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
+bare globals, so a test that stubs them patches `server.<name>`.
+`server_ops_state.py` owns the runtime state: `SimulationState` and
+`build_state()`, `SimulationClock`, `ContinuousGenerationStatus`,
+`RefusalCounters`, `load_anomaly_rows()`, and the operator error sink
+(`_record_server_error`, its traceback helpers and
+`_record_continuous_generation_failure`). It imports only stdlib plus
+`server_mutations` / `server_ops_profiles` / `server_ops_support` /
+`server_traces`. The leaves that name `SimulationState` only in annotations
+keep their `TYPE_CHECKING` import from `server_ops`, which re-exports it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
 OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_path`,
 `_format_explain` and its recursive-field/type-label helpers) — the only leaf in
 the package with no intra-package import at all — while the state-bound
@@ -330,6 +336,7 @@ Sources:
 `src/anomaly_metric_creator/server_ops_render_workloads.py`;
 `src/anomaly_metric_creator/server_k8s_resources.py`;
 `src/anomaly_metric_creator/server_k8s_dispatch.py`;
+`src/anomaly_metric_creator/server_ops_state.py`;
 `src/anomaly_metric_creator/server_k8s_objects.py`;
 `src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;
