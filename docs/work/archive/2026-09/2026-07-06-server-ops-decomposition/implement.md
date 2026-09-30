@@ -214,6 +214,15 @@ cut.
   gate. `tests/test_server.py`'s OpenAPI snapshot-reuse test now patches
   `server_k8s_resources.resource_snapshot`, the binding the builders read.
 
+  **Cut 6 (sd:258):** the Kubernetes REST dispatch spine (9 definitions:
+  `kubernetes_api_response`, `kubernetes_api_post_response`,
+  `kubernetes_api_mutating_response`, the core/group/per-resource response
+  builders, `_k8s_mutated_object`, `k8s_watch_objects`,
+  `record_kubernetes_api_call`) moved verbatim to `server_k8s_dispatch.py`,
+  with `import urllib.parse`, which `server_ops` no longer uses. The leaf
+  stays outside the mypy clean gate for now: 3 errors moved with it, tracked
+  on sd:261.
+
 - [x] Adjacent seam — **settled** (child `08-15-server-alias-getattr-delegation`).
   `server.py`'s hand-maintained alias block is gone: 227
   `NAME = _server_ops.NAME` lines replaced by a module `__getattr__` forwarding

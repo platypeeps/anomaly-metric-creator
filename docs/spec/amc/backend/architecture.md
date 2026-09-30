@@ -195,10 +195,10 @@ rules hold that seam together, and both are enforced by
 
 Lower-level server
 behavior belongs in focused modules: `server_ops.py` for simulation state,
-command rendering, the REST dispatch spine, and Helm Secret encoding, with
-`resource_snapshot()`, the kubectl renderers and the snapshot-bound
-Kubernetes resource builders in the `server_ops_*` / `server_k8s_resources`
-leaves below;
+command rendering, and Helm Secret encoding, with `resource_snapshot()`,
+the kubectl renderers, the snapshot-bound Kubernetes resource builders and
+the REST dispatch spine in the `server_ops_*` / `server_k8s_resources` /
+`server_k8s_dispatch` leaves below;
 `server_ops_support.py` for the pure lower leaf shared downward by the ops and
 k8s surfaces (`DEFAULT_RELEASE` / `DEFAULT_CHART`, the snapshot-row /
 timestamp / string-coercion / list-resource-version accessors, and `_preview`,
@@ -282,11 +282,20 @@ dispatcher and `_k8s_endpointslice`. It imports `resource_snapshot` from
 `server_ops_snapshot` plus `server_command_render` / `server_helm_impl` /
 `server_k8s_api` / `server_k8s_objects` / `server_ops_explain` /
 `server_ops_parse` / `server_ops_support`; a test that stubs the snapshot
-for these builders patches `server_k8s_resources.resource_snapshot`. The
-dispatch spine (`kubernetes_api_response`, the mutating/group/core/resource
-dispatchers, `k8s_watch_objects`, `record_kubernetes_api_call`) still lives
-in `server_ops.py`; it moves the same way, and a moved caller's monkeypatch
-target moves with it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
+for these builders patches `server_k8s_resources.resource_snapshot`.
+`server_k8s_dispatch.py` owns the REST dispatch spine
+(`kubernetes_api_response`, `kubernetes_api_post_response`,
+`kubernetes_api_mutating_response`, the core/group/per-resource response
+builders, `_k8s_mutated_object`, `k8s_watch_objects`,
+`record_kubernetes_api_call`), importing one-way from `server_k8s_resources`,
+the `server_ops_render*` leaves, `server_ops_snapshot`, `server_k8s_api`,
+`server_k8s_api_trace`, `server_k8s_objects`, `server_k8s_tables`,
+`server_mutations`, `server_ops_support` and `server_traces`. `server.py`
+calls `kubernetes_api_post_response` / `kubernetes_api_mutating_response` as
+bare globals, so a test that stubs them patches `server.<name>`. The runtime
+state (`SimulationState`, `build_state`, the clock, refusal counters and
+error sink) still lives in `server_ops.py`; it moves the same way, and a
+moved caller's monkeypatch target moves with it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
 OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_path`,
 `_format_explain` and its recursive-field/type-label helpers) — the only leaf in
 the package with no intra-package import at all — while the state-bound
@@ -320,6 +329,7 @@ Sources:
 `src/anomaly_metric_creator/server_ops_render_manifest.py`;
 `src/anomaly_metric_creator/server_ops_render_workloads.py`;
 `src/anomaly_metric_creator/server_k8s_resources.py`;
+`src/anomaly_metric_creator/server_k8s_dispatch.py`;
 `src/anomaly_metric_creator/server_k8s_objects.py`;
 `src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;

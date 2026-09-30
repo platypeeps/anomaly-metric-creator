@@ -3,8 +3,8 @@
 One-way sibling leaf of ``server_k8s_api.py`` (epic
 ``07-06-server-ops-decomposition`` step 5, size carve). Holds the pure
 ``kubernetes-api`` trace-body / fingerprint / intent / rate-limit-bucket helpers
-and the query-secret redaction pair that ``record_kubernetes_api_call`` (which
-stays in ``server_ops.py``) consumes. None of these are read back by any other
+and the query-secret redaction pair that ``record_kubernetes_api_call`` (in
+``server_k8s_dispatch.py``) consumes. None of these are read back by any other
 ``server_k8s_api`` member, so the cluster is a pure sink and lifts cleanly into
 its own leaf, keeping both leaves under the 800-line module cap.
 
