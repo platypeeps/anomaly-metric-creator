@@ -220,8 +220,10 @@ cut.
   builders, `_k8s_mutated_object`, `k8s_watch_objects`,
   `record_kubernetes_api_call`) moved verbatim to `server_k8s_dispatch.py`,
   with `import urllib.parse`, which `server_ops` no longer uses. The leaf
-  stays outside the mypy clean gate for now: 3 errors moved with it, tracked
-  on sd:261.
+  first stayed outside the mypy clean gate with 3 errors carried over from
+  the move; a sd:261 follow-up renamed the deployment branch's `body` to
+  `deployment_body`, narrowed the POST `metadata` through `_dict_or_empty`,
+  and enrolled it.
 
   **Cut 7 (sd:258):** the runtime state (13 definitions: `SimulationState`,
   `build_state`, `SimulationClock`, `ContinuousGenerationStatus`,

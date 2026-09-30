@@ -57,7 +57,7 @@ from .server_ops_render import _render_logs
 from .server_ops_render_manifest import _generic_resource_row, _mutation_snapshot_kind
 from .server_ops_render_workloads import _normalized_resource_prefix
 from .server_ops_snapshot import resource_snapshot
-from .server_ops_support import _find_named, _k8s_list_resource_version, _preview
+from .server_ops_support import _dict_or_empty, _find_named, _k8s_list_resource_version, _preview
 from .server_traces import CommandTrace
 
 if TYPE_CHECKING:
@@ -207,8 +207,10 @@ def kubernetes_api_mutating_response(
                 "supported",
                 "k8s.apps.deployments.mutate.not_found",
             )
-        body = _k8s_scale(state, deployment) if subresource == "scale" else _k8s_deployment(state, deployment)
-        return _k8s_json_response(body, f"k8s.apps.deployments.{method.lower()}")
+        deployment_body = (
+            _k8s_scale(state, deployment) if subresource == "scale" else _k8s_deployment(state, deployment)
+        )
+        return _k8s_json_response(deployment_body, f"k8s.apps.deployments.{method.lower()}")
     snapshot_kind = _mutation_snapshot_kind(resource)
     if method in {"PATCH", "PUT"} and snapshot_kind and name:
         state.mutations.put_resource(
@@ -299,7 +301,7 @@ def kubernetes_api_mutating_response(
             f"k8s.{resource}.delete",
         )
     if method == "POST":
-        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        metadata = _dict_or_empty(payload.get("metadata"))
         name = (
             name
             or str(metadata.get("name", ""))
