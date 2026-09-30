@@ -40,6 +40,7 @@ CLEAN_MODULES: tuple[str, ...] = (
     "src/anomaly_metric_creator/server_k8s_api.py",
     "src/anomaly_metric_creator/server_k8s_api_trace.py",
     "src/anomaly_metric_creator/server_k8s_objects.py",
+    "src/anomaly_metric_creator/server_k8s_resources.py",
     "src/anomaly_metric_creator/server_k8s_tables.py",
     "src/anomaly_metric_creator/server_kubernetes.py",
     "src/anomaly_metric_creator/server_mcp.py",

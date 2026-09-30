@@ -17,9 +17,9 @@ Strictly one-way: it imports only stdlib and the lower leaves
 conceptual position, so the compatibility surface (``server.py``'s alias block,
 the k8s facades, ``server_mcp.py``) is unchanged and ``server_ops.__all__``
 membership stays byte-identical. The snapshot-bound dispatch spine
-(``kubernetes_api_response`` and friends, ``_k8s_objects_for_resource``, the
-OpenAPI *document* builders) stays in ``server_ops.py`` — no member here reads
-the resource snapshot. ``SimulationState`` appears only in annotations, which
+(``kubernetes_api_response`` and friends) stays in ``server_ops.py``, and
+``_k8s_objects_for_resource`` and the OpenAPI *document* builders live in
+``server_k8s_resources.py`` — no member here reads the resource snapshot. ``SimulationState`` appears only in annotations, which
 ``from __future__ import annotations`` stringizes, so no runtime import of it is
 needed.
 """

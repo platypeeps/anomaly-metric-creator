@@ -17,7 +17,7 @@ import urllib.request
 
 import pytest
 
-from anomaly_metric_creator import server, server_config, server_ops_render, server_traces
+from anomaly_metric_creator import server, server_config, server_k8s_resources, server_ops_render, server_traces
 
 REAL_CLIENT_SMOKE_ENV = "AMC_RUN_REAL_CLIENT_SMOKE"
 
@@ -555,7 +555,7 @@ def test_kubectl_explain_projects_common_resource_schemas(amc, tmp_path):
 
 def test_openapi_schema_generation_reuses_resource_snapshot(amc, tmp_path, monkeypatch):
     state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
-    original_resource_snapshot = server._server_ops.resource_snapshot
+    original_resource_snapshot = server_k8s_resources.resource_snapshot
     snapshot_calls = 0
 
     def counted_resource_snapshot(snapshot_state):
@@ -563,7 +563,9 @@ def test_openapi_schema_generation_reuses_resource_snapshot(amc, tmp_path, monke
         snapshot_calls += 1
         return original_resource_snapshot(snapshot_state)
 
-    monkeypatch.setattr(server._server_ops, "resource_snapshot", counted_resource_snapshot)
+    # The OpenAPI document builders call resource_snapshot from their own leaf;
+    # patching server_ops.resource_snapshot would count nothing.
+    monkeypatch.setattr(server_k8s_resources, "resource_snapshot", counted_resource_snapshot)
 
     discovery = server.kubernetes_api_response(state, "GET", "/openapi/v3", {}, "")
     assert discovery is not None
