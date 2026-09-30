@@ -238,17 +238,23 @@ non-snapshot mutation-parse helpers, request-body readers, and
 `server_k8s_api_trace.py` for the sibling sink leaf carved off it for the
 800-line cap (the `_api_*` fingerprint helpers, `_is_kubernetes_api_path`,
 `_rate_limit_bucket`, and query/secret redaction), importing one-way from
-`server_k8s_api` plus `server_ops_support._preview`. The `resource_snapshot`-bound dispatch spine
-(`kubernetes_api_response`, the mutating/group/core/resource dispatchers,
-`_k8s_objects_for_resource`, `_k8s_endpointslice`, `k8s_watch_objects`,
-`record_kubernetes_api_call`, and the OpenAPI document builders) stays in
-`server_ops.py` because it calls `resource_snapshot` — monkeypatched in
-`server_ops`'s namespace by `tests/test_server.py` — and cannot move without a
-reverse import. That same binding blocks the originally-planned render-dispatch
-extraction: `_render_get`, `_render_describe`, `_render_scale`, `_render_delete`,
-`_render_patch`, and `_render_diff` all call `resource_snapshot`, so splitting
-them out needs a live provider seam rather than a plain move. What was movable
-without one is out: `server_ops_explain.py` for the ten pure `kubectl explain` /
+`server_k8s_api` plus `server_ops_support._preview`. `server_ops_snapshot.py` owns the overlay-aware
+`resource_snapshot()` and its runtime closure (snapshot kind sets, the
+namespace and mutation-row appliers, component health/impact/event helpers,
+`_event_rows`, `_node_rows`, `_replica_count`, `_pod_name`,
+`_stable_cluster_ip`), importing one-way from `server_command_render` /
+`server_helm_impl` / `server_k8s_api` / `server_k8s_objects` /
+`server_mutations` / `server_ops_profiles` / `server_ops_support` with
+`SimulationState` under a `TYPE_CHECKING` guard. `server_ops` re-imports every
+name, so a caller left in `server_ops` still resolves `resource_snapshot` in
+`server_ops`'s namespace, where `tests/test_server.py` monkeypatches it. The
+dispatch spine (`kubernetes_api_response`, the mutating/group/core/resource
+dispatchers, `_k8s_objects_for_resource`, `_k8s_endpointslice`,
+`k8s_watch_objects`, `record_kubernetes_api_call`, the OpenAPI document
+builders) and the render dispatch (`_render_get`, `_render_describe`,
+`_render_scale`, `_render_delete`, `_render_patch`, `_render_diff`) still live
+in `server_ops.py`; they can now move by importing `resource_snapshot` from the
+leaf, and a moved caller's monkeypatch target moves with it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
 OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_path`,
 `_format_explain` and its recursive-field/type-label helpers) — the only leaf in
 the package with no intra-package import at all — while the state-bound
@@ -276,6 +282,7 @@ Sources:
 `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_ops_support.py`;
+`src/anomaly_metric_creator/server_ops_snapshot.py`;
 `src/anomaly_metric_creator/server_k8s_objects.py`;
 `src/anomaly_metric_creator/server_k8s_tables.py`;
 `src/anomaly_metric_creator/server_ops_profiles.py`;
