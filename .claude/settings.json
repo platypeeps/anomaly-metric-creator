@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(/**/.env)",
+      "Read(/**/.env.local)",
+      "Read(/**/.env.*.local)",
+      "Read(/**/.env.development)",
+      "Read(/**/.env.staging)",
+      "Read(/**/.env.production)",
+      "Read(/**/secrets/**)",
+      "Read(/**/*.key)",
+      "Read(/**/*-key.pem)",
+      "Read(/**/*.p12)",
+      "Read(/**/*.pfx)",
+      "Read(/**/id_rsa)",
+      "Read(/**/id_ecdsa)",
+      "Read(/**/id_ed25519)",
+      "Read(/**/.netrc)",
+      "Read(/**/.pypirc)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/credentials)",
+      "Read(~/.config/gh/hosts.yml)"
+    ]
+  }
+}
