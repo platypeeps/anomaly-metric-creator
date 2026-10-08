@@ -10,7 +10,7 @@ repos:
     # both lines together. Dependabot bumps only this `rev`; land its bump as
     # an attributed replacement PR that also raises `ruff==` and relocks
     # `uv.lock` (docs/spec/amc/backend/testing-quality.md).
-    rev: v0.16.9
+    rev: v0.16.10
     hooks:
       - id: ruff
         name: ruff F401 (tests/)
