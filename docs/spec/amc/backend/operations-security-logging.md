@@ -498,7 +498,7 @@ being set. Gating on the flag alone would convert *every* `ValueError` raised
 anywhere under `build_state()` into an operator-facing startup refusal, so an
 unrelated regression would surface as a polished message naming a file that
 is perfectly fine. The producer and the matcher live next to each other in
-`server_mutations` so they cannot drift.
+`server_mutations_loader` so they cannot drift.
 
 *Stale components are dropped, not refused.* An entry keyed by a component
 this run does not have — the operator narrowed `--components` — is dropped
@@ -521,4 +521,5 @@ know the file, and `amc validate`'s unknown-file check would flag it. Sources:
 `README.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
+`src/anomaly_metric_creator/server_mutations_loader.py`;
 `tests/test_server_mutation_persistence.py`.

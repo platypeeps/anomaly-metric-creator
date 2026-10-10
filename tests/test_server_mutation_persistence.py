@@ -16,12 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from anomaly_metric_creator import server, server_mutations
+from anomaly_metric_creator import server, server_mutations, server_mutations_loader
 from anomaly_metric_creator.server_mutations import (
     MUTATION_STATE_SCHEMA_VERSION,
     SimulationMutations,
-    load_persisted_mutations,
 )
+from anomaly_metric_creator.server_mutations_loader import load_persisted_mutations
 
 NOW = _dt.datetime(2026, 8, 26, 12, 0, 0)
 
@@ -243,7 +243,7 @@ def test_envelope_keys_match_the_declared_set():
     """The writer and the downgrade check must not drift apart."""
     overlay = SimulationMutations()
 
-    assert set(overlay.envelope()) == server_mutations._PERSISTED_ENVELOPE_KEYS
+    assert set(overlay.envelope()) == server_mutations_loader._PERSISTED_ENVELOPE_KEYS
 
 
 def test_unknown_workload_field_is_refused(tmp_path):
@@ -554,6 +554,23 @@ def test_persistence_uses_the_shared_atomic_writer():
     assert not re.search(r"open\(\s*self\.persist_path", source)
 
 
+def test_the_loader_leaf_is_never_imported_back():
+    """The loader imports the dataclasses; the reverse import would be a cycle."""
+    tree = ast.parse(inspect.getsource(server_mutations))
+    imported = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    } | {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+
+    assert not any("server_mutations_loader" in name for name in imported)
+
+
 def test_persist_mutations_is_reachable_from_the_config_allowlist():
     """A serve flag absent from the allowlist is rejected by --config."""
     assert "persist_mutations" in server._SERVE_CONFIG_SERVER_KEYS
@@ -618,7 +635,7 @@ def test_serve_refuses_an_unreadable_overlay_instead_of_tracing(tmp_path, monkey
     path = tmp_path / "mutations.json"
 
     def _refuse(*_args, **_kwargs):
-        raise server_mutations._persist_error(path, "corrupt JSON")
+        raise server_mutations_loader._persist_error(path, "corrupt JSON")
 
     monkeypatch.setattr(server, "build_state", _refuse)
 
@@ -715,7 +732,7 @@ def test_every_hydrated_field_annotation_has_a_check(cls):
     missing = [
         f"{spec.name}: {spec.type}"
         for spec in dataclasses.fields(cls)
-        if spec.type not in server_mutations._FIELD_TYPE_CHECKS
+        if spec.type not in server_mutations_loader._FIELD_TYPE_CHECKS
     ]
 
     assert not missing, f"{cls.__name__} field(s) with no type check: {missing}"
@@ -727,7 +744,7 @@ def test_an_unvalidatable_annotation_refuses_rather_than_passing_through(
     """Fail closed: an annotation missing from the table is not an open gate."""
     path = tmp_path / "mutations.json"
     _write_overlay(path, {"workloads": {"apiserver": {"replicas": 3}}})
-    monkeypatch.setattr(server_mutations, "_FIELD_TYPE_CHECKS", {})
+    monkeypatch.setattr(server_mutations_loader, "_FIELD_TYPE_CHECKS", {})
 
     with pytest.raises(ValueError, match="which this loader cannot validate"):
         load_persisted_mutations(path, known_components=KNOWN)

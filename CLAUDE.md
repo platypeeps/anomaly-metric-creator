@@ -65,7 +65,7 @@ Library-API Error Posture.
 | HTTP serve facade | `server.py` |
 | `serve --config` loading, validation, serve-arg parsing | `server_config.py` |
 | Simulation state, command rendering, snapshots | `server_ops.py` and its leaves (`server_ops_state.py`, `server_ops_support.py`, `server_ops_parse.py`, `server_ops_profiles.py`, `server_ops_explain.py`, `server_ops_payloads.py`, `server_ops_snapshot.py`, `server_ops_render.py`, `server_ops_render_manifest.py`, `server_ops_render_workloads.py`, `server_k8s_resources.py`, `server_k8s_dispatch.py`, `server_command_render.py`, `server_k8s_objects.py`, `server_k8s_tables.py`, `server_k8s_api.py`, `server_k8s_api_trace.py`, `server_helm_impl.py`) |
-| Traces, overlay state, debug UI, MCP | `server_traces.py`, `server_mutations.py`, `server_debug_ui.py`, `server_mcp.py` |
+| Traces, overlay state, debug UI, MCP | `server_traces.py`, `server_mutations.py`, `server_mutations_loader.py`, `server_debug_ui.py`, `server_mcp.py` |
 | Offline bundle analysis | `trace_bundle.py` |
 
 Full per-module contents, the server leaf DAG, and the import directions are in

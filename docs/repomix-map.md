@@ -541,6 +541,7 @@ src/
     server_k8s_tables.py
     server_kubernetes.py
     server_mcp.py
+    server_mutations_loader.py
     server_mutations.py
     server_ops_explain.py
     server_ops_parse.py

@@ -24,7 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from .server_mutations import DEFAULT_NAMESPACE, SimulationMutations, _format_dt, load_persisted_mutations
+from .server_mutations import DEFAULT_NAMESPACE, SimulationMutations, _format_dt
+from .server_mutations_loader import load_persisted_mutations
 from .server_ops_profiles import OPS_SCENARIO_PROFILES, validate_ops_profiles
 from .server_ops_support import _parse_optional_timestamp, _parse_user_timestamp
 from .server_traces import DEFAULT_TRACE_LIMIT, CommandTraceStore
