@@ -505,7 +505,10 @@ this run does not have — the operator narrowed `--components` — is dropped
 with a stderr `WARNING` naming it, and the post-drop overlay is written back
 so the ghost does not reappear. Keeping it would put the Kubernetes facade out
 of parity with the generated data; refusing outright would strand an operator
-over a compatible narrowing.
+over a compatible narrowing. Restored `extra_events` are trimmed the same way
+to this run's `extra_event_limit` (`--debug-ring-size`), keeping the newest:
+the limit is per-run config, so a file written under a larger ring must not
+restore past the current one.
 
 Serialization is driven by an explicit `_PERSISTED_MUTATION_FIELDS` /
 `_UNPERSISTED_MUTATION_FIELDS` partition rather than `dataclasses.asdict`

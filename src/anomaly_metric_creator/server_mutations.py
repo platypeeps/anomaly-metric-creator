@@ -787,10 +787,14 @@ def load_persisted_mutations(
             key: dict(_require_mapping(path, body, f"mutations.created_resources['{kind}']['{key}']"))
             for key, body in sorted(_require_mapping(path, entries, f"mutations.created_resources['{kind}']").items())
         }
-    mutations.extra_events = [
+    events = [
         dict(_require_mapping(path, event, "mutations.extra_events[]"))
         for event in _require_sequence(path, state["extra_events"], "mutations.extra_events")
     ]
+    # The limit is this run's --debug-ring-size, so a file written under a
+    # larger ring keeps only its newest events, as `record_event` would.
+    limit = max(mutations.extra_event_limit, 0)
+    mutations.extra_events = events[-limit:] if limit else []
     mutations.release = _hydrate_release(path, state["release"])
     mutations.version = _require_version(path, state["version"])
 

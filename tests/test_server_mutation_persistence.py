@@ -805,6 +805,25 @@ def test_an_extra_event_that_is_not_an_object_is_refused(tmp_path):
     assert "mutations.extra_events[] must be a JSON object, got str" in message
 
 
+# `extra_event_limit` is this run's `--debug-ring-size`, not overlay state, so
+# a file written under a larger ring must not restore past the current one.
+@pytest.mark.parametrize("limit", [2, 0])
+def test_restored_extra_events_are_trimmed_to_this_runs_limit(tmp_path, limit):
+    path = tmp_path / "mutations.json"
+    seed = load_persisted_mutations(path, known_components=KNOWN, extra_event_limit=10)
+    for index in range(5):
+        seed.record_event("Normal", "Probe", f"pod/p{index}", f"event {index}", NOW)
+
+    restored = load_persisted_mutations(
+        path, known_components=KNOWN, extra_event_limit=limit
+    )
+
+    kept = [event["object"] for event in restored.extra_events]
+    assert kept == [f"pod/p{index}" for index in range(5 - limit, 5)]
+    on_disk = json.loads(path.read_text(encoding="utf-8"))["mutations"]["extra_events"]
+    assert [event["object"] for event in on_disk] == kept
+
+
 def test_a_deleted_pod_reaches_disk_on_its_own_commit(tmp_path, monkeypatch):
     """The set must not depend on whatever runs next to persist it.
 
