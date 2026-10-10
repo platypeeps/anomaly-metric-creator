@@ -51,51 +51,14 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
     determinism.md
     extraction.md
     repository-lints.md
-  skills/
-    amc-server-compatibility/
-      agents/
-        openai.yaml
-      references/
-        server-compatibility-map.md
-      SKILL.md
-.codex/
-  skills/
-    amc-server-compatibility/
-      agents/
-        openai.yaml
-      references/
-        server-compatibility-map.md
-      SKILL.md
-.gemini/
-  skills/
-    amc-server-compatibility/
-      agents/
-        openai.yaml
-      references/
-        server-compatibility-map.md
-      SKILL.md
+  settings.json
 .github/
   instructions/
     anomaly-metric-creator.instructions.md
-  skills/
-    amc-server-compatibility/
-      agents/
-        openai.yaml
-      references/
-        server-compatibility-map.md
-      SKILL.md
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
   sd-review.json
-.opencode/
-  skills/
-    amc-server-compatibility/
-      agents/
-        openai.yaml
-      references/
-        server-compatibility-map.md
-      SKILL.md
 .prism/
   rules.json
   rules.schema.json
