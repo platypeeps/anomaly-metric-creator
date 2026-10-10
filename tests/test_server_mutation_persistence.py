@@ -154,6 +154,20 @@ def test_unknown_schema_version_is_refused_naming_the_file(tmp_path):
     assert "99" in message
 
 
+# Python compares both equal to 1, so a `!= 1` guard alone accepts them.
+@pytest.mark.parametrize("value", [True, 1.0], ids=["bool", "float"])
+def test_schema_version_refuses_anything_but_a_plain_integer(tmp_path, value):
+    path = tmp_path / "mutations.json"
+    path.write_text(json.dumps({"schema_version": value, "mutations": {}}), encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert f"schema_version {value!r} is not supported" in message
+
+
 def test_corrupt_json_is_refused_rather_than_half_hydrated(tmp_path):
     path = tmp_path / "mutations.json"
     path.write_text('{"schema_version": 1, "mutations": {', encoding="utf-8")

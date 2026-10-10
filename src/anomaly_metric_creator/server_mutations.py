@@ -715,16 +715,17 @@ def load_persisted_mutations(
     # hand-edited file missing `mutations` would otherwise default to `{}`
     # and restore an empty overlay in silence -- the operator would see a
     # server that started clean and conclude the mutations were never made.
-    # Checked before `schema_version`, whose own `.get()` would report a
-    # missing envelope as `schema_version None`, naming the wrong problem.
+    # Checked before `schema_version`, so a missing envelope is not reported
+    # as `schema_version None`, naming the wrong problem.
     missing_envelope = _PERSISTED_ENVELOPE_KEYS - set(payload)
     if missing_envelope:
         raise _persist_error(
             path,
             f"persisted state is missing key(s) {', '.join(sorted(missing_envelope))}",
         )
-    version = payload.get("schema_version")
-    if version != MUTATION_STATE_SCHEMA_VERSION:
+    # `True` and `1.0` both compare equal to 1, so `!=` alone accepts them.
+    version = payload["schema_version"]
+    if not _is_int(version) or version != MUTATION_STATE_SCHEMA_VERSION:
         raise _persist_error(
             path,
             f"schema_version {version!r} is not supported by this build "

@@ -436,7 +436,9 @@ envelope field silently dropped on downgrade — the exact failure the overlay
 check exists to prevent, one level up. `schema_version` is validated before
 the unknown-key sweep, so a file from a future build reports the version
 mismatch, which tells the operator what to do about it, instead of leading
-with an unknown key.
+with an unknown key. `schema_version` must be a plain integer: `True` and
+`1.0` both compare equal to 1, so the guard checks the type with `_is_int`
+before it compares the value.
 
 Both envelope keys must also be **present**, checked before `schema_version`.
 The unknown-key sweep is one-directional, so a truncated or hand-edited file
