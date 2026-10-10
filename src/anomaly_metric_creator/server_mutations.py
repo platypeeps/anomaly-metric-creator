@@ -751,22 +751,27 @@ def load_persisted_mutations(
         raise _persist_error(
             path, f"mutations has unknown key(s) {', '.join(sorted(unknown))}"
         )
+    # The writer emits every field, so a missing one means a truncated or
+    # hand-edited file; defaulting it would restore less than the file held.
+    missing = _PERSISTED_MUTATION_FIELDS - set(state)
+    if missing:
+        raise _persist_error(
+            path, f"mutations is missing key(s) {', '.join(sorted(missing))}"
+        )
 
     dropped: list[str] = []
     mutations.workloads = _hydrate_workloads(
-        path, state.get("workloads", {}), known_components, dropped
+        path, state["workloads"], known_components, dropped
     )
     for pod_name in sorted(
-        _require_string_sequence(
-            path, state.get("deleted_pods", []), "mutations.deleted_pods"
-        )
+        _require_string_sequence(path, state["deleted_pods"], "mutations.deleted_pods")
     ):
         if _component_from_pod_name(pod_name) not in known_components:
             dropped.append(f"deleted pod '{pod_name}' of unknown component")
             continue
         mutations.deleted_pods.add(pod_name)
     for kind, names in sorted(
-        _require_mapping(path, state.get("deleted_resources", {}), "mutations.deleted_resources").items()
+        _require_mapping(path, state["deleted_resources"], "mutations.deleted_resources").items()
     ):
         # `deleted_resources` is declared `dict[str, set[str]]`; a non-string
         # element would satisfy the annotation nowhere and surface later as a
@@ -776,7 +781,7 @@ def load_persisted_mutations(
             _require_string_sequence(path, names, f"mutations.deleted_resources['{kind}']")
         )
     for kind, entries in sorted(
-        _require_mapping(path, state.get("created_resources", {}), "mutations.created_resources").items()
+        _require_mapping(path, state["created_resources"], "mutations.created_resources").items()
     ):
         mutations.created_resources[kind] = {
             key: dict(_require_mapping(path, body, f"mutations.created_resources['{kind}']['{key}']"))
@@ -784,12 +789,10 @@ def load_persisted_mutations(
         }
     mutations.extra_events = [
         dict(_require_mapping(path, event, "mutations.extra_events[]"))
-        for event in _require_sequence(
-            path, state.get("extra_events", []), "mutations.extra_events"
-        )
+        for event in _require_sequence(path, state["extra_events"], "mutations.extra_events")
     ]
-    mutations.release = _hydrate_release(path, state.get("release", {}))
-    mutations.version = _require_version(path, state.get("version", 0))
+    mutations.release = _hydrate_release(path, state["release"])
+    mutations.version = _require_version(path, state["version"])
 
     for note in dropped:
         print(f"WARNING: --persist-mutations {path}: dropped {note}", file=sys.stderr)

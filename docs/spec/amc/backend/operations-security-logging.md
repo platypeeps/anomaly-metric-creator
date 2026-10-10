@@ -446,7 +446,10 @@ missing `mutations` would otherwise fall back to `{}` and restore an empty
 overlay in silence — the operator would see a server that started clean and
 conclude the mutations were never made. Presence is checked first because
 `schema_version`'s own lookup would report a missing envelope as
-`schema_version None`, naming the wrong problem.
+`schema_version None`, naming the wrong problem. The same holds one level
+down: every `_PERSISTED_MUTATION_FIELDS` key must be present in `mutations`,
+checked after the unknown-key sweep, and the loader then reads each with
+`state[key]` so the check and the reads stay in lockstep.
 
 The type checks are not decoration: the file is an untrusted read-back
 boundary, and every wrong type it can carry is *iterable* or *coercible*,

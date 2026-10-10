@@ -248,25 +248,44 @@ def test_envelope_keys_match_the_declared_set():
 
 def test_unknown_workload_field_is_refused(tmp_path):
     path = tmp_path / "mutations.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schema_version": MUTATION_STATE_SCHEMA_VERSION,
-                "mutations": {"workloads": {"apiserver": {"replicas": 1, "nope": 2}}},
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_overlay(path, {"workloads": {"apiserver": {"replicas": 1, "nope": 2}}})
 
     with pytest.raises(ValueError, match="nope"):
         load_persisted_mutations(path, known_components=KNOWN)
 
 
 def _write_overlay(path: Path, mutations: dict) -> None:
+    """Write a complete overlay with ``mutations`` laid over an empty one.
+
+    The loader refuses a file missing any persisted field, so a test that
+    names only the field it exercises still needs the rest present.
+    """
+    full = SimulationMutations().envelope()["mutations"] | mutations
+    path.write_text(
+        json.dumps({"schema_version": MUTATION_STATE_SCHEMA_VERSION, "mutations": full}),
+        encoding="utf-8",
+    )
+
+
+# The writer emits every field, so a file missing one was truncated or
+# hand-edited; defaulting it to empty would restore less than the file held,
+# in silence.
+@pytest.mark.parametrize("missing", sorted(server_mutations._PERSISTED_MUTATION_FIELDS))
+def test_a_missing_mutations_key_is_refused(tmp_path, missing):
+    path = tmp_path / "mutations.json"
+    mutations = SimulationMutations().envelope()["mutations"]
+    del mutations[missing]
     path.write_text(
         json.dumps({"schema_version": MUTATION_STATE_SCHEMA_VERSION, "mutations": mutations}),
         encoding="utf-8",
     )
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert f"mutations is missing key(s) {missing}" in message
 
 
 # Each wrong type here is iterable, which is the whole hazard: unguarded, a
