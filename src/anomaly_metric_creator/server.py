@@ -249,6 +249,10 @@ class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
     """
 
     daemon_threads = True
+    # socketserver's listen backlog of 5 is below kubectl's discovery burst (one
+    # connection per groupVersion); a lagging accept loop let macOS reset the
+    # rest, which kubectl reported as "write: broken pipe" (sd:3090).
+    request_queue_size = 128
 
     def __init__(
         self,
