@@ -7,6 +7,10 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- `amc serve` now listens with a backlog of 128 connections instead of
+  Python's default of 5. Under load, `kubectl` discovery opens more parallel
+  connections than 5, and macOS reset the extra ones, which `kubectl` reported
+  as `write: broken pipe`.
 - `amc serve --cors-allow-origin` (and the `cors_allow_origin` config key) now
   refuses a value that contains a control character such as CR or LF, naming
   the flag but not the value; exit code `2`. Such a value would have split the

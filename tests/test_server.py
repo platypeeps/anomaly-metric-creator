@@ -1,4 +1,5 @@
 import base64
+import concurrent.futures
 import contextlib
 import datetime as _dt
 import gzip
@@ -6,6 +7,7 @@ import importlib
 import json
 import os
 import shutil
+import socket
 import sqlite3
 import subprocess
 import threading
@@ -4691,6 +4693,67 @@ def test_real_kubectl_binary_smoke_when_available(amc, tmp_path):
         assert "scheduler-backfill" in run_kubectl(["get", "jobs", "-n", "saas-prod"])
         assert "cacheservice-slice" in run_kubectl(["get", "endpointslices", "-n", "saas-prod"])
         assert "yes" in run_kubectl(["auth", "can-i", "get", "pods", "-n", "saas-prod"])
+
+
+def test_server_answers_a_connection_burst_queued_before_accept(amc, tmp_path):
+    """sd:3090: kubectl discovery opens one connection per groupVersion at once
+    (each response closes it), and under load the accept loop lags. A burst
+    larger than the listen backlog was reset by the kernel, which kubectl
+    reported as ``write: broken pipe``. Hold accept, queue the burst, release,
+    and require an answer on every connection."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    httpd, _base_url = server.start_test_server(state)
+    accept_gate = threading.Event()
+    accept = httpd.get_request
+
+    def gated_accept():
+        accept_gate.wait()
+        return accept()
+
+    # serve_forever looks get_request up per connection, so the gate holds the
+    # whole burst in the kernel's listen queue until it is released.
+    httpd.get_request = gated_accept
+    _host, port = httpd.server_address
+    # Below the default worker cap (64), so no connection meets the 503 path.
+    burst = 32
+
+    def open_and_send(_index):
+        try:
+            conn = socket.create_connection(("127.0.0.1", port), timeout=5)
+        except OSError as exc:
+            return exc
+        try:
+            conn.sendall(b"GET /api HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        except OSError as exc:
+            conn.close()
+            return exc
+        return conn
+
+    def status_line(conn):
+        try:
+            data = b""
+            while b"\r\n" not in data:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            return data.split(b"\r\n", 1)[0]
+        except OSError as exc:
+            return repr(exc).encode("utf-8")
+        finally:
+            conn.close()
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(burst) as pool:
+            conns = list(pool.map(open_and_send, range(burst)))
+        accept_gate.set()
+        lines = [repr(c).encode("utf-8") if isinstance(c, OSError) else status_line(c) for c in conns]
+    finally:
+        accept_gate.set()
+        httpd.shutdown()
+        httpd.server_close()
+    failed = [line for line in lines if b" 200 " not in line]
+    assert failed == [], f"{len(failed)}/{burst} connections failed: {failed[:3]}"
 
 
 def test_rate_limit_refusal_increments_state_refusal_counter(amc, tmp_path):

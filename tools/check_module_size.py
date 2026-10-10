@@ -110,7 +110,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "orchestration (see architecture.md)",
     ),
     "server.py": (
-        1985,
+        1989,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
@@ -129,7 +129,9 @@ RATCHET: dict[str, tuple[int, str]] = {
         "the cluster's calls to itself; +7 from sd:1865 for the CORS "
         "control-character refusal, one branch each in serve_main, "
         "start_test_server and the two CORS header builders, plus its "
-        "re-import line; the predicate itself lives in server_config.py",
+        "re-import line; the predicate itself lives in server_config.py; +4 "
+        "from sd:3090 for the listen backlog attribute on the bounded server "
+        "class, with its reason",
     ),
     "server_mcp.py": (
         1453,
