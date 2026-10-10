@@ -31,11 +31,18 @@ otel-activity.log
 code-review-report.json
 code-review-report.md
 
+# Rendered skill copies. `.agents/skills/` is the one tracked source;
+# `scripts/sync-agent-skills.py` renders it into these roots on each machine.
+/.claude/skills/
+/.codex/skills/
+/.gemini/skills/
+/.github/skills/
+/.opencode/skills/
+
 # AI-tool local state. Only the roots this repository actually tracks are
 # listed: `.agents/`, `.claude/`, `.codex/`, `.gemini/`, `.opencode/`. The
 # previous block enumerated eighteen vendor directories, seventeen of which
-# have never held a tracked file here. The rendered skill payloads under these
-# roots are tracked and must stay tracked, so only local state is ignored.
+# have never held a tracked file here.
 .agents/**/*.local.*
 .agents/**/.cache/
 .agents/**/cache/

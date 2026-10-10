@@ -49,7 +49,7 @@ wildcard namespaces, invalid owner/repo slugs, missing paths, and unintended
 whole-repo scans.
 
 For docs, skills, prompts, and gate changes, check lockstep across
-`docs/spec`, `.agents/skills` and its rendered copies,
+`docs/spec`, `.agents/skills`,
 `.github/instructions`, `.pre-commit-config.yaml`,
 `scripts/check.sh`, `tools/check_local_gate_contract.py`,
 `tools/check_copilot_instruction_contract.py`, and focused tests. When the PR
