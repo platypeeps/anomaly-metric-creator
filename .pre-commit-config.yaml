@@ -138,14 +138,14 @@ repos:
         files: ^(Makefile|scripts/.*|tools/.*|\.pre-commit-config\.yaml)$
         pass_filenames: false
       # Keep Copilot's mechanical review instructions in sync with docs/spec,
-      # the PR template checklist, the rendered skill policy, and the local
-      # review preflight wiring. Reviewer judgment stays in prose; drift-prone anchors
+      # the PR template checklist, and the local review preflight wiring.
+      # Reviewer judgment stays in prose; drift-prone anchors
       # get enforced here and in the review-churn test suite.
       - id: copilot-instruction-contract
         name: guard Copilot instruction contract
         entry: python tools/check_copilot_instruction_contract.py
         language: python
-        files: ^(\.github/(copilot-instructions\.md|instructions/anomaly-metric-creator\.instructions\.md|PULL_REQUEST_TEMPLATE\.md|skills/.+)|\.prism/rules\.json|scripts/check-review-preflight\.mjs|tools/check_copilot_instruction_contract\.py|docs/spec/amc/backend/(testing-quality|documentation-review)\.md)$
+        files: ^(\.github/(copilot-instructions\.md|instructions/anomaly-metric-creator\.instructions\.md|PULL_REQUEST_TEMPLATE\.md)|\.prism/rules\.json|scripts/check-review-preflight\.mjs|tools/check_copilot_instruction_contract\.py|docs/spec/amc/backend/(testing-quality|documentation-review)\.md)$
         pass_filenames: false
       # Forbid unfinished template placeholders in committed work items.
       # Finish-work output is repository history, not a scratchpad, so fill

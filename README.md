@@ -126,11 +126,9 @@ generated artifact in place.
 
 ## Agent skills
 
-Repo-local agent skills live under `.agents/skills` (the canonical source) and
-are mirrored byte-for-byte into `.claude`, `.codex`, `.gemini`, `.github`, and
-`.opencode` by `scripts/sync-agent-skills.py`. Edit the canonical copy, then run
-`python scripts/sync-agent-skills.py` to fan out and
-`python scripts/sync-agent-skills.py --check` to verify every mirror matches.
+Repo-local agent skills live under `.agents/skills`, the one tracked source.
+Render the gitignored copies in `.claude`, `.codex`, `.gemini`, `.github` and
+`.opencode` with `python3 scripts/sync-agent-skills.py` after a clone or a skill edit.
 
 `.agents/skills` is the inventory; this file does not restate it. A paragraph
 here described a vendored `security-best-practices` skill and linked its
@@ -1389,8 +1387,8 @@ python3 scripts/sync-agent-skills.py --check
 ```
 
 The command always covers `.agents`, `.claude`, `.codex`, `.gemini`, `.github`,
-and `.opencode`. The `.claude` copy remains local and ignored by Git, but is a
-required sync destination so Claude Code receives the same guidance.
+and `.opencode`. Every copy outside `.agents` is ignored by Git, so a fresh
+clone or worktree has no rendered skills until the command runs.
 
 ### Parallel execution
 

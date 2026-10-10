@@ -283,15 +283,11 @@ through. It is operator tooling, not a CI step. Sources: `tools/pr_comment.sh`;
 
 ## Platform Adapter Policy
 
-The repository's skills live under `.agents/skills/`. That tree is the source;
-`.claude/`, `.codex/`, `.gemini/`, `.github/`, and `.opencode/` each carry a
-rendered copy of it, produced by `scripts/sync-agent-skills.py`, which
+The repository's skills live under `.agents/skills/`, the one tracked tree.
+`scripts/sync-agent-skills.py` renders it into `.claude/`, `.codex/`,
+`.gemini/`, `.github/`, and `.opencode/`, which `.gitignore` excludes, and
 enumerates the source directory rather than working from a roster. Edit the
-`.agents/` copy and re-run the sync; never hand-edit a rendered copy.
-
-Nothing compares the six copies mechanically -- `sync-agent-skills.py --check`
-reports drift when it is run, but no hook or CI step runs it -- so a hand-edited
-render is caught in review, not by a gate.
+`.agents/` copy and re-run the sync; a hand-edited render never reaches review.
 
 Skills should teach a platform how to load the specs under `docs/spec/`, not
 carry separate project conventions. Sources: `.agents/skills/`;
