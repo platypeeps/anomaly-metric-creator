@@ -2,7 +2,7 @@
 title: Wire or retire the approval-duplicate gate
 status: done
 created: 2026-07-17
-branch: sdelmas/wire-approval-duplicate-gate
+branch: operator/wire-approval-duplicate-gate
 ---
 # Wire or retire the approval-duplicate gate
 

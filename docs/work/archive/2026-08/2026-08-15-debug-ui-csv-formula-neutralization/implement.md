@@ -69,7 +69,7 @@ Validate: `.venv/bin/pytest tests/test_debug_ui_javascript.py -v`
 
 The blast radius was enumerated with `git grep`, not guessed. Four live sites;
 the archived `07-17-audit-trace-export-hardening` artifacts and
-`.trellis/workspace/sdelmas/journal-2.md:1092` are historical records of what
+`.trellis/workspace/<operator>/journal-2.md:1092` are historical records of what
 was true then and are deliberately **not** edited.
 
 - [x] `.trellis/spec/amc/backend/api-cli-server.md:469-475` — the durable rule

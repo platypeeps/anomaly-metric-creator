@@ -2,7 +2,7 @@
 title: Deduplicate the long-form merge writer into csv_layout
 status: done
 created: 2026-07-06
-branch: sdelmas/long-form-merge-dedupe
+branch: operator/long-form-merge-dedupe
 ---
 # Deduplicate the long-form merge writer into csv_layout
 

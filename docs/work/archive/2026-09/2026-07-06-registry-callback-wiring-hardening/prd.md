@@ -71,7 +71,7 @@ only because the fresh copies' registries are identical unless patched.
 - Surfaced while verifying the decomposition's callback pattern; the
   pattern itself was a good call — this task is about its one sharp edge.
 
-## Decision (2026-07-17, sdelmas)
+## Decision (2026-07-17, the maintainer)
 
 **Chosen posture: document + guard with a test** (not instance-keyed
 hardening). Keep the single last-writer-wins callback singleton; make its

@@ -2,7 +2,7 @@
 title: Verify topology coupling math against zero-denominator inputs
 status: done
 created: 2026-07-02
-branch: sdelmas/verify-topology-divzero
+branch: operator/verify-topology-divzero
 ---
 # Verify topology coupling math against zero-denominator inputs
 

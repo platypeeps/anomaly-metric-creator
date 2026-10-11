@@ -142,7 +142,7 @@ limited to docstrings if a pointer needs to name them.
       destination). `COPILOT_OK`.
 - [x] `.venv/bin/pre-commit run --all-files` exits 0. **Partially met:** 12 of
       13 hooks pass. `guard Trellis artifact hygiene` fails on
-      `.trellis/workspace/sdelmas/index.md` (sessions 20–63 missing from
+      `.trellis/workspace/<operator>/index.md` (sessions 20–63 missing from
       workspace journals). Verified pre-existing — the file is untouched by
       this branch and the hook fails identically on a clean `main` checkout.
       Repairing the journal rotation is out of this task's scope.

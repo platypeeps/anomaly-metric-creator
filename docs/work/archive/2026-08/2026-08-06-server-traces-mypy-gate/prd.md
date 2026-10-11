@@ -2,7 +2,7 @@
 title: Unblock server_traces.py for the mypy clean gate
 status: done
 created: 2026-08-06
-branch: sdelmas/08-07-server-traces-mypy-gate
+branch: operator/08-07-server-traces-mypy-gate
 ---
 # Unblock server_traces.py for the mypy clean gate
 

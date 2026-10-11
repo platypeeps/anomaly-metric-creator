@@ -2,7 +2,7 @@
 title: Extract server_ops_profiles.py (epic step 1)
 status: done
 created: 2026-08-04
-branch: sdelmas/extract-server-ops-profiles
+branch: operator/extract-server-ops-profiles
 ---
 # Extract server_ops_profiles.py (epic step 1)
 

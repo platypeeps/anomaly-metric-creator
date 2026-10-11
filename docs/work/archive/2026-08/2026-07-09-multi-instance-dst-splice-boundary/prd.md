@@ -67,7 +67,7 @@ implemented with a safe non-monotonic timestamp model.
 
 - [x] The supported-vs-unsupported decision is recorded with rationale in the
       PRD or a follow-on design note before implementation starts.
-      (See ## Decision (2026-08-26, sdelmas).)
+      (See ## Decision (2026-08-26, the maintainer).)
 - [x] The obligation the chosen outcome carries is met. Kept unsupported was
       chosen, so its obligation applies: user-facing and agent-facing docs name
       the `--inject-dst-artifact-day` plus multi-instance incompatibility as an
@@ -92,7 +92,7 @@ implemented with a safe non-monotonic timestamp model.
 - [x] No duplicate Trellis task is created for the same boundary.
       (`ls .trellis/tasks/ | grep -i 'dst\|splice'` returns only this one.)
 
-## Decision (2026-08-26, sdelmas)
+## Decision (2026-08-26, the maintainer)
 
 **Chosen posture: keep unsupported.** The `--inject-dst-artifact-day > 0`
 plus multi-instance combination (`--instances-per-component > 1` or

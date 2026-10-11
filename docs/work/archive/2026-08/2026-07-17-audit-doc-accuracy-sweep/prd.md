@@ -2,7 +2,7 @@
 title: Fix stale security, reviewer, and reference docs
 status: done
 created: 2026-07-17
-branch: sdelmas/audit-doc-accuracy-sweep
+branch: operator/audit-doc-accuracy-sweep
 ---
 # Fix stale security, reviewer, and reference docs
 

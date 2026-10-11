@@ -2,7 +2,7 @@
 
 ## Overview
 
-The posture decision is recorded in the PRD (2026-07-17, sdelmas):
+The posture decision is recorded in the PRD (2026-07-17, the maintainer):
 **document + guard with a test**, not instance-keyed hardening. The
 callback wiring stays a last-writer-wins singleton; this task makes the
 single-instance constraint explicit and pins the behavior so a refactor

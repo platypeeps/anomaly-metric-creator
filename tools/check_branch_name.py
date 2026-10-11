@@ -2,7 +2,7 @@
 """Reject branch names that leak the project's ticket literal.
 
 Historically a stretch of feature branches landed with head refs
-shaped like ``sdelmas/ver-<N>-…``, republishing the internal
+shaped like ``operator/ver-<N>-…``, republishing the internal
 ticket identifier in the public PR URL even after PR titles had
 been cleaned up. This lint closes that gap structurally: any
 branch name matching ``(?i)(^|\\b)ver-\\d+`` is rejected at push
