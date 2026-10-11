@@ -2,7 +2,7 @@
 title: Clean npm dep, stale pins, and vendored-skill provenance
 status: done
 created: 2026-07-17
-branch: sdelmas/audit-dependency-hygiene
+branch: operator/audit-dependency-hygiene
 ---
 # Clean npm dep, stale pins, and vendored-skill provenance
 

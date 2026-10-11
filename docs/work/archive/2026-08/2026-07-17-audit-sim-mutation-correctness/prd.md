@@ -2,7 +2,7 @@
 title: Fix simulator clock and command-mutation correctness gaps
 status: done
 created: 2026-07-17
-branch: sdelmas/sim-mutation-correctness
+branch: operator/sim-mutation-correctness
 ---
 # Fix simulator clock and command-mutation correctness gaps
 

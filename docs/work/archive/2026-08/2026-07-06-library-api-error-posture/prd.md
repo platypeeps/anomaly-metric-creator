@@ -98,7 +98,7 @@ through the package facades (`combine.py`, `otel.py`, `schema.py`):
   "library code talking to the terminal" theme) — sequence them together
   or one after the other.
 
-## Decision (2026-07-17, sdelmas)
+## Decision (2026-07-17, the maintainer)
 
 **Chosen posture: CLI-internal.** The facade-exported functions are a
 CLI-internal surface, not a supported programmatic API. `SystemExit` deep

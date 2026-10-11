@@ -2,7 +2,7 @@
 title: Fix the eval recipe's trace-evidence loss
 status: done
 created: 2026-07-17
-branch: sdelmas/audit-eval-harness-trace-retrieval
+branch: operator/audit-eval-harness-trace-retrieval
 ---
 # Fix the eval recipe's trace-evidence loss
 

@@ -33,7 +33,7 @@ exception. This file is the oracle; keep it out of the commit.
 ## Step 1 — create branch
 
 ```bash
-git switch -c sdelmas/server-command-render-extract
+git switch -c operator/server-command-render-extract
 ```
 
 **Check:** `git branch --show-current` = the new name (branch-name lint: no

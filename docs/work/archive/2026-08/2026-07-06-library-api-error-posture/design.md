@@ -3,7 +3,7 @@
 ## Overview
 
 The posture decision is already recorded in the PRD (2026-07-17,
-sdelmas): **CLI-internal** — the facade exports are not a supported
+the maintainer): **CLI-internal** — the facade exports are not a supported
 programmatic API; `SystemExit`, combine-path stdout, and silent
 missing-CSV skips are documented semantics, not defects. Execution is
 docs-only; this design just fixes the exact doc surfaces and wording so

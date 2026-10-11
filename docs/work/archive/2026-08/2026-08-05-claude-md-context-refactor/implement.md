@@ -208,7 +208,7 @@ Rollback point: this commit is revertible alone.
 - [x] `.venv/bin/python3 tools/check_ci_review_contract.py` → exit 0
 - [x] `.venv/bin/pre-commit run --all-files` → 12 of 13 hooks pass. The
       `guard Trellis artifact hygiene` hook fails on
-      `.trellis/workspace/sdelmas/index.md` ("session N is missing from
+      `.trellis/workspace/<operator>/index.md` ("session N is missing from
       workspace journals", lines 33–76). **Pre-existing, not this branch**:
       `git diff main --name-only -- .trellis/workspace/` is empty, and the
       same hook fails identically on a clean `main` checkout (verified by

@@ -2,7 +2,7 @@
 title: Extract server_ops_parse.py (step 2)
 status: done
 created: 2026-08-04
-branch: sdelmas/extract-server-ops-parse
+branch: operator/extract-server-ops-parse
 ---
 # Extract server_ops_parse.py (step 2)
 

@@ -2,7 +2,7 @@
 title: Extract render-primitives + CommandResult into server_command_render leaf (epic 07-06 precursor to helm)
 status: done
 created: 2026-08-04
-branch: sdelmas/server-command-render-extract
+branch: operator/server-command-render-extract
 ---
 # Extract render-primitives + CommandResult (epic 07-06 precursor to helm)
 
@@ -20,7 +20,7 @@ splice-hazard grep, render-oracle diff).
 ## Problem
 
 The parked helm closure audit (`08-04-server-helm-impl-extract`, on branch
-`sdelmas/helm-extract-closure-audit`) found the helm cluster cannot become a
+`operator/helm-extract-closure-audit`) found the helm cluster cannot become a
 one-way leaf while it constructs `CommandResult` and calls five general
 render/command primitives that all still live in `server_ops.py`. A re-audit
 against current `main` (server_ops.py 5,590 lines) confirms steps 4/5 already

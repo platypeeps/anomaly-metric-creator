@@ -106,16 +106,16 @@ but kept `always()` on its aggregate now has this exact transient — #179 and
 - [x] Every candidate repo the operator provides is audited against the
       three preconditions, with a recorded verdict (see Results).
 - [x] Affected repos get the `!cancelled()` guard, each in its own PR
-      (hoa-manager #92, rwbp-website #109, rwbp-coordinator #97,
-      loadsmith #63). None of the target repos carry a CI-contract lint, so
+      (repo A #92, repo B #109, repo C #97,
+      repo D #63). None of the target repos carry a CI-contract lint, so
       no anchor/mutation test applied there; the invariant is pinned inline
       via the "Do not revert to always()" rationale comment on each
       `ci_result` guard. (amc, the origin, keeps its contract-lint anchor +
       `test_reverting_aggregate_guard_to_always_fails` mutation test.)
 - [x] Repos needing #179's auto-merge full-gate first are flagged: none. The
-      three rwbp/loadsmith repos have no auto-merge workflow (so the #197
+      three repos B, C and D have no auto-merge workflow (so the #197
       transient-red is low-frequency there — manual re-push/re-run only, not
-      auto-merge arming), and hoa already gates its expensive lane on the
+      auto-merge arming), and repo A already gates its expensive lane on the
       `full-ci` trigger. Only the `!cancelled()` half of the #197/#179 pair
       was needed anywhere.
 - [x] A short per-repo results summary is recorded (see Results).
@@ -132,10 +132,10 @@ the authoritative audit pulled each aggregate's `if:` directly):
 
 | Repo | `ci_result` guard was | auto-merge | Verdict | Fix PR (merged) |
 |---|---|---|---|---|
-| hoa-manager | `if: ${{ always() }}` | yes | affected | #92 |
-| rwbp-website | `if: ${{ always() }}` | no | affected (low-freq) | #109 |
-| rwbp-coordinator | `if: always()` | no | affected (low-freq) | #97 |
-| loadsmith | `if: ${{ always() }}` | no | affected (low-freq) | #63 |
+| repo A | `if: ${{ always() }}` | yes | affected | #92 |
+| repo B | `if: ${{ always() }}` | no | affected (low-freq) | #109 |
+| repo C | `if: always()` | no | affected (low-freq) | #97 |
+| repo D | `if: ${{ always() }}` | no | affected (low-freq) | #63 |
 
 Each fix is the one-line `always()` → `!cancelled()` guard on the
 branch-protection-required `ci_result` aggregate, with the ported rationale

@@ -2,7 +2,7 @@
 title: Introduce coverage threshold and per-module mypy gating
 status: done
 created: 2026-07-06
-branch: sdelmas/coverage-mypy-gating
+branch: operator/coverage-mypy-gating
 ---
 # Introduce coverage threshold and per-module mypy gating
 

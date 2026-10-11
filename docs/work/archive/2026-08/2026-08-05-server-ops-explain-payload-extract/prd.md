@@ -2,7 +2,7 @@
 title: Extract pure explain and payload leaves from server_ops
 status: done
 created: 2026-08-05
-branch: sdelmas/08-05-server-ops-explain-payload-extract
+branch: operator/08-05-server-ops-explain-payload-extract
 ---
 # Extract server_ops_explain.py + server_ops_payloads.py (epic step 6a)
 

@@ -43,7 +43,7 @@ SCRIPT = REPO_ROOT / "tools" / "check_approval_duplicate.py"
 # treated as a duplicate against ``HEAD_OID``.
 HEAD_OID = "f1321e4575e32887c72163a994076dde98bda75d"
 HEAD_DATE = "2026-06-01T00:10:00Z"
-AUTHOR = "sdelmas"
+AUTHOR = "example-user"
 
 
 def _write_prior(tmp_path: Path, comments: list[dict]) -> Path:
@@ -545,15 +545,15 @@ def test_correction_no_space_after_dash_is_refused(tmp_path: Path):
 
 def test_duplicate_login_compare_is_case_insensitive(tmp_path: Path):
     """GitHub logins are case-insensitive — distinct accounts cannot
-    differ only by case. The gate must treat ``--author Sdelmas``
-    against a prior ``user.login = sdelmas`` as a same-author
+    differ only by case. The gate must treat ``--author Example-User``
+    against a prior ``user.login = example-user`` as a same-author
     duplicate, not let the casing mismatch sneak the new comment
     through. Covers Copilot review feedback that the earlier
     case-sensitive compare contradicted GitHub's identity model."""
     prior = [
         {
             "id": 8001,
-            "user": {"login": "sdelmas"},
+            "user": {"login": "example-user"},
             "created_at": "2026-06-01T00:16:25Z",
             "body": "APPROVED\n\nFirst.\n",
         }
@@ -562,7 +562,7 @@ def test_duplicate_login_compare_is_case_insensitive(tmp_path: Path):
         "APPROVED\n\nSecond.\n",
         prior_comments=prior,
         tmp_path=tmp_path,
-        author="Sdelmas",  # different casing on input
+        author="Example-User",  # different casing on input
     )
     assert result.returncode == 1, result.stderr
     assert "8001" in result.stderr

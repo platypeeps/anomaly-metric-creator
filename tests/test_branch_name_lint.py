@@ -89,7 +89,7 @@ def test_script_exists():
         "ver-1",
         "VER-655-foo",
         "Ver-42",
-        "sdelmas/ver-655-refresh-mermaid-diagrams",
+        "operator/ver-655-refresh-mermaid-diagrams",
         "feature/VER-7-foo",
         "user/ver-100",
     ],

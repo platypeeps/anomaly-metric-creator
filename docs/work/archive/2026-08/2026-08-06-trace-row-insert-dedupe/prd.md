@@ -2,7 +2,7 @@
 title: Dedupe the SQLite trace INSERT block across the two store methods
 status: done
 created: 2026-08-06
-branch: sdelmas/08-06-trace-row-insert-dedupe
+branch: operator/08-06-trace-row-insert-dedupe
 ---
 # Dedupe the SQLite trace INSERT block across the two store methods
 

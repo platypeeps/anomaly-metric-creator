@@ -2,7 +2,7 @@
 title: Prune MCP tool scans and trace-store hot paths
 status: done
 created: 2026-07-17
-branch: sdelmas/mcp-query-performance
+branch: operator/mcp-query-performance
 ---
 # Prune MCP tool scans and trace-store hot paths
 

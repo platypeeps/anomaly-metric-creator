@@ -2,7 +2,7 @@
 title: Extract server_k8s_api.py from server_ops.py
 status: done
 created: 2026-08-05
-branch: sdelmas/server-k8s-api-extract
+branch: operator/server-k8s-api-extract
 ---
 # Extract server_k8s_api.py from server_ops.py (epic step 5)
 

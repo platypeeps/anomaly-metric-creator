@@ -2,7 +2,7 @@
 title: Make serve error plane observable by default
 status: done
 created: 2026-07-17
-branch: sdelmas/serve-error-refusal-counters
+branch: operator/serve-error-refusal-counters
 ---
 # Make serve error plane observable by default
 

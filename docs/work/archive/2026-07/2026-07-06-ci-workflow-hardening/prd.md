@@ -2,7 +2,7 @@
 title: "Harden CI workflows: SHA pins, timeouts, PR-body wiring, full-ci label"
 status: done
 created: 2026-07-06
-branch: sdelmas/ci-workflow-hardening-completion
+branch: operator/ci-workflow-hardening-completion
 ---
 # Harden CI workflows: SHA pins, timeouts, PR-body wiring, full-ci label
 
