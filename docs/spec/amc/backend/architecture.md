@@ -306,8 +306,8 @@ bare globals, so a test that stubs them patches `server.<name>`.
 `RefusalCounters`, `load_anomaly_rows()`, and the operator error sink
 (`_record_server_error`, its traceback helpers and
 `_record_continuous_generation_failure`). It imports only stdlib plus
-`server_mutations` / `server_ops_profiles` / `server_ops_support` /
-`server_traces`. The leaves that name `SimulationState` only in annotations
+`server_mutations` / `server_mutations_loader` / `server_ops_profiles` /
+`server_ops_support` / `server_traces`. The leaves that name `SimulationState` only in annotations
 keep their `TYPE_CHECKING` import from `server_ops`, which re-exports it. Also out: `server_ops_explain.py` for the ten pure `kubectl explain` /
 OpenAPI schema formatters (`_openapi_schema_from_value`, `_explain_schema_at_path`,
 `_format_explain` and its recursive-field/type-label helpers) — the only leaf in
@@ -322,6 +322,10 @@ operations, and the `_load_manifest_documents` /
 `server_command_render` for `CommandResult` only. `server_traces.py` for
 command traces, JSONL/SQLite persistence, search, import/export, and
 unsupported summaries; `server_mutations.py` for overlay state;
+`server_mutations_loader.py` for the `--persist-mutations` read-back
+(`load_persisted_mutations`, its `_require_*` validators and
+`PERSIST_ERROR_PREFIX`), a leaf that imports the overlay dataclasses from
+`server_mutations` and is never imported back by it;
 `server_config.py` for `--config` loading, validation, and serve-arg parsing
 (the `_load_serve_config` / `_config_mapping_to_argv` / `_probe_config_generate_argv`
 / `_vouch_no_flag_generate_keys` / `_parse_serve_args` cluster), a leaf that
@@ -354,6 +358,7 @@ Sources:
 `src/anomaly_metric_creator/server_helm_impl.py`;
 `src/anomaly_metric_creator/server_traces.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
+`src/anomaly_metric_creator/server_mutations_loader.py`;
 `src/anomaly_metric_creator/server_debug_ui.py`;
 `src/anomaly_metric_creator/server_mcp.py`;
 `src/anomaly_metric_creator/server_commands.py`;

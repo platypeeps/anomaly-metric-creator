@@ -16,12 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from anomaly_metric_creator import server, server_mutations
+from anomaly_metric_creator import server, server_mutations, server_mutations_loader
 from anomaly_metric_creator.server_mutations import (
     MUTATION_STATE_SCHEMA_VERSION,
     SimulationMutations,
-    load_persisted_mutations,
 )
+from anomaly_metric_creator.server_mutations_loader import load_persisted_mutations
 
 NOW = _dt.datetime(2026, 8, 26, 12, 0, 0)
 
@@ -154,6 +154,20 @@ def test_unknown_schema_version_is_refused_naming_the_file(tmp_path):
     assert "99" in message
 
 
+# Python compares both equal to 1, so a `!= 1` guard alone accepts them.
+@pytest.mark.parametrize("value", [True, 1.0], ids=["bool", "float"])
+def test_schema_version_refuses_anything_but_a_plain_integer(tmp_path, value):
+    path = tmp_path / "mutations.json"
+    path.write_text(json.dumps({"schema_version": value, "mutations": {}}), encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert f"schema_version {value!r} is not supported" in message
+
+
 def test_corrupt_json_is_refused_rather_than_half_hydrated(tmp_path):
     path = tmp_path / "mutations.json"
     path.write_text('{"schema_version": 1, "mutations": {', encoding="utf-8")
@@ -229,30 +243,49 @@ def test_envelope_keys_match_the_declared_set():
     """The writer and the downgrade check must not drift apart."""
     overlay = SimulationMutations()
 
-    assert set(overlay.envelope()) == server_mutations._PERSISTED_ENVELOPE_KEYS
+    assert set(overlay.envelope()) == server_mutations_loader._PERSISTED_ENVELOPE_KEYS
 
 
 def test_unknown_workload_field_is_refused(tmp_path):
     path = tmp_path / "mutations.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schema_version": MUTATION_STATE_SCHEMA_VERSION,
-                "mutations": {"workloads": {"apiserver": {"replicas": 1, "nope": 2}}},
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_overlay(path, {"workloads": {"apiserver": {"replicas": 1, "nope": 2}}})
 
     with pytest.raises(ValueError, match="nope"):
         load_persisted_mutations(path, known_components=KNOWN)
 
 
 def _write_overlay(path: Path, mutations: dict) -> None:
+    """Write a complete overlay with ``mutations`` laid over an empty one.
+
+    The loader refuses a file missing any persisted field, so a test that
+    names only the field it exercises still needs the rest present.
+    """
+    full = SimulationMutations().envelope()["mutations"] | mutations
+    path.write_text(
+        json.dumps({"schema_version": MUTATION_STATE_SCHEMA_VERSION, "mutations": full}),
+        encoding="utf-8",
+    )
+
+
+# The writer emits every field, so a file missing one was truncated or
+# hand-edited; defaulting it to empty would restore less than the file held,
+# in silence.
+@pytest.mark.parametrize("missing", sorted(server_mutations._PERSISTED_MUTATION_FIELDS))
+def test_a_missing_mutations_key_is_refused(tmp_path, missing):
+    path = tmp_path / "mutations.json"
+    mutations = SimulationMutations().envelope()["mutations"]
+    del mutations[missing]
     path.write_text(
         json.dumps({"schema_version": MUTATION_STATE_SCHEMA_VERSION, "mutations": mutations}),
         encoding="utf-8",
     )
+
+    with pytest.raises(ValueError) as excinfo:
+        load_persisted_mutations(path, known_components=KNOWN)
+
+    message = str(excinfo.value)
+    assert str(path) in message
+    assert f"mutations is missing key(s) {missing}" in message
 
 
 # Each wrong type here is iterable, which is the whole hazard: unguarded, a
@@ -521,6 +554,23 @@ def test_persistence_uses_the_shared_atomic_writer():
     assert not re.search(r"open\(\s*self\.persist_path", source)
 
 
+def test_the_loader_leaf_is_never_imported_back():
+    """The loader imports the dataclasses; the reverse import would be a cycle."""
+    tree = ast.parse(inspect.getsource(server_mutations))
+    imported = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    } | {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+
+    assert not any("server_mutations_loader" in name for name in imported)
+
+
 def test_persist_mutations_is_reachable_from_the_config_allowlist():
     """A serve flag absent from the allowlist is rejected by --config."""
     assert "persist_mutations" in server._SERVE_CONFIG_SERVER_KEYS
@@ -585,7 +635,7 @@ def test_serve_refuses_an_unreadable_overlay_instead_of_tracing(tmp_path, monkey
     path = tmp_path / "mutations.json"
 
     def _refuse(*_args, **_kwargs):
-        raise server_mutations._persist_error(path, "corrupt JSON")
+        raise server_mutations_loader._persist_error(path, "corrupt JSON")
 
     monkeypatch.setattr(server, "build_state", _refuse)
 
@@ -682,7 +732,7 @@ def test_every_hydrated_field_annotation_has_a_check(cls):
     missing = [
         f"{spec.name}: {spec.type}"
         for spec in dataclasses.fields(cls)
-        if spec.type not in server_mutations._FIELD_TYPE_CHECKS
+        if spec.type not in server_mutations_loader._FIELD_TYPE_CHECKS
     ]
 
     assert not missing, f"{cls.__name__} field(s) with no type check: {missing}"
@@ -694,7 +744,7 @@ def test_an_unvalidatable_annotation_refuses_rather_than_passing_through(
     """Fail closed: an annotation missing from the table is not an open gate."""
     path = tmp_path / "mutations.json"
     _write_overlay(path, {"workloads": {"apiserver": {"replicas": 3}}})
-    monkeypatch.setattr(server_mutations, "_FIELD_TYPE_CHECKS", {})
+    monkeypatch.setattr(server_mutations_loader, "_FIELD_TYPE_CHECKS", {})
 
     with pytest.raises(ValueError, match="which this loader cannot validate"):
         load_persisted_mutations(path, known_components=KNOWN)
@@ -770,6 +820,25 @@ def test_an_extra_event_that_is_not_an_object_is_refused(tmp_path):
     message = str(excinfo.value)
     assert str(path) in message
     assert "mutations.extra_events[] must be a JSON object, got str" in message
+
+
+# `extra_event_limit` is this run's `--debug-ring-size`, not overlay state, so
+# a file written under a larger ring must not restore past the current one.
+@pytest.mark.parametrize("limit", [2, 0])
+def test_restored_extra_events_are_trimmed_to_this_runs_limit(tmp_path, limit):
+    path = tmp_path / "mutations.json"
+    seed = load_persisted_mutations(path, known_components=KNOWN, extra_event_limit=10)
+    for index in range(5):
+        seed.record_event("Normal", "Probe", f"pod/p{index}", f"event {index}", NOW)
+
+    restored = load_persisted_mutations(
+        path, known_components=KNOWN, extra_event_limit=limit
+    )
+
+    kept = [event["object"] for event in restored.extra_events]
+    assert kept == [f"pod/p{index}" for index in range(5 - limit, 5)]
+    on_disk = json.loads(path.read_text(encoding="utf-8"))["mutations"]["extra_events"]
+    assert [event["object"] for event in on_disk] == kept
 
 
 def test_a_deleted_pod_reaches_disk_on_its_own_commit(tmp_path, monkeypatch):

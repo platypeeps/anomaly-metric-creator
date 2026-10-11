@@ -28,11 +28,11 @@ from typing import Any, Callable
 from . import server_mcp
 from .server_debug_ui import DEBUG_HTML
 from .server_mutations import (
-    PERSIST_ERROR_PREFIX,
     HelmReleaseMutation as HelmReleaseMutation,  # noqa: F401
     SimulationMutations as SimulationMutations,  # noqa: F401
     WorkloadMutation as WorkloadMutation,  # noqa: F401
 )
+from .server_mutations_loader import PERSIST_ERROR_PREFIX
 from .server_traces import (
     COMMAND_TRACE_DB_SCHEMA_VERSION as COMMAND_TRACE_DB_SCHEMA_VERSION,
     COMMAND_TRACE_EXPORT_VERSION as COMMAND_TRACE_EXPORT_VERSION,

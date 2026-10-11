@@ -436,7 +436,9 @@ envelope field silently dropped on downgrade — the exact failure the overlay
 check exists to prevent, one level up. `schema_version` is validated before
 the unknown-key sweep, so a file from a future build reports the version
 mismatch, which tells the operator what to do about it, instead of leading
-with an unknown key.
+with an unknown key. `schema_version` must be a plain integer: `True` and
+`1.0` both compare equal to 1, so the guard checks the type with `_is_int`
+before it compares the value.
 
 Both envelope keys must also be **present**, checked before `schema_version`.
 The unknown-key sweep is one-directional, so a truncated or hand-edited file
@@ -444,7 +446,10 @@ missing `mutations` would otherwise fall back to `{}` and restore an empty
 overlay in silence — the operator would see a server that started clean and
 conclude the mutations were never made. Presence is checked first because
 `schema_version`'s own lookup would report a missing envelope as
-`schema_version None`, naming the wrong problem.
+`schema_version None`, naming the wrong problem. The same holds one level
+down: every `_PERSISTED_MUTATION_FIELDS` key must be present in `mutations`,
+checked after the unknown-key sweep, and the loader then reads each with
+`state[key]` so the check and the reads stay in lockstep.
 
 The type checks are not decoration: the file is an untrusted read-back
 boundary, and every wrong type it can carry is *iterable* or *coercible*,
@@ -493,14 +498,17 @@ being set. Gating on the flag alone would convert *every* `ValueError` raised
 anywhere under `build_state()` into an operator-facing startup refusal, so an
 unrelated regression would surface as a polished message naming a file that
 is perfectly fine. The producer and the matcher live next to each other in
-`server_mutations` so they cannot drift.
+`server_mutations_loader` so they cannot drift.
 
 *Stale components are dropped, not refused.* An entry keyed by a component
 this run does not have — the operator narrowed `--components` — is dropped
 with a stderr `WARNING` naming it, and the post-drop overlay is written back
 so the ghost does not reappear. Keeping it would put the Kubernetes facade out
 of parity with the generated data; refusing outright would strand an operator
-over a compatible narrowing.
+over a compatible narrowing. Restored `extra_events` are trimmed the same way
+to this run's `extra_event_limit` (`--debug-ring-size`), keeping the newest:
+the limit is per-run config, so a file written under a larger ring must not
+restore past the current one.
 
 Serialization is driven by an explicit `_PERSISTED_MUTATION_FIELDS` /
 `_UNPERSISTED_MUTATION_FIELDS` partition rather than `dataclasses.asdict`
@@ -513,4 +521,5 @@ know the file, and `amc validate`'s unknown-file check would flag it. Sources:
 `README.md`; `src/anomaly_metric_creator/server.py`;
 `src/anomaly_metric_creator/server_ops.py`;
 `src/anomaly_metric_creator/server_mutations.py`;
+`src/anomaly_metric_creator/server_mutations_loader.py`;
 `tests/test_server_mutation_persistence.py`.
