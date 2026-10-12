@@ -5,13 +5,56 @@ from __future__ import annotations
 import contextlib
 import csv
 import json
+import logging
 import sys
+import threading
 import weakref
 from pathlib import Path
 from typing import Callable
 
 _DEFAULT_RUNTIME_KEY = "__default__"
 _run_runtimes: dict[str, weakref.ReferenceType] = {}
+
+# The package logger every generator module logs under (``logging.getLogger(
+# __name__)`` in each). Nothing configures it at import; ``main()`` attaches
+# the CLI handler below, and serve mode adds a forwarding handler per pass.
+_PACKAGE_LOGGER_NAME = "anomaly_metric_creator"
+_cli_log_lock = threading.Lock()
+
+
+class _CliStderrHandler(logging.StreamHandler):
+    """Print each record's bare message to the current ``sys.stderr``.
+
+    The stream resolves at emit time, as ``logging.lastResort`` does, so a
+    caller that swaps ``sys.stderr`` (``contextlib.redirect_stderr``, pytest
+    capture) still receives the line. The default formatter is
+    ``%(message)s``, and every message carries its own ``WARNING: `` prefix,
+    so CLI stderr is byte-identical to the ``print(..., file=sys.stderr)``
+    calls it replaced.
+    """
+
+    _amc_cli_stderr = True
+
+    @property
+    def stream(self):  # type: ignore[override]
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, value) -> None:
+        pass
+
+
+def _ensure_cli_log_handler() -> None:
+    """Attach one ``_CliStderrHandler`` to the package logger, idempotently.
+
+    Keyed on a marker attribute rather than the class, so a fresh module copy
+    loaded by a test does not stack a second handler.
+    """
+    package_logger = logging.getLogger(_PACKAGE_LOGGER_NAME)
+    with _cli_log_lock:
+        if any(getattr(h, "_amc_cli_stderr", False) for h in package_logger.handlers):
+            return
+        package_logger.addHandler(_CliStderrHandler())
 
 
 def _configure_run_runtime(
@@ -213,6 +256,7 @@ def _pre_clean_output_dir(
 
 
 def main(argv=None, *, runtime_key: str = _DEFAULT_RUNTIME_KEY):
+    _ensure_cli_log_handler()
     namespace = _runtime_namespace(runtime_key)
     COMPONENTS = namespace["COMPONENTS"]
     INSTANCES = namespace["INSTANCES"]

@@ -33,6 +33,7 @@ from .server_mutations import (
     WorkloadMutation as WorkloadMutation,  # noqa: F401
 )
 from .server_mutations_loader import PERSIST_ERROR_PREFIX
+from .server_ops_state import _forward_generation_logs
 from .server_traces import (
     COMMAND_TRACE_DB_SCHEMA_VERSION as COMMAND_TRACE_DB_SCHEMA_VERSION,
     COMMAND_TRACE_EXPORT_VERSION as COMMAND_TRACE_EXPORT_VERSION,
@@ -142,6 +143,9 @@ class StructuredRequestLogger:
 
     def log_error(self, record: dict[str, Any]) -> None:
         self._write({"event": "error", **record})
+
+    def log_warning(self, record: dict[str, Any]) -> None:
+        self._write({"event": "warning", **record})
 
     def _write(self, record: dict[str, Any]) -> None:
         line = json.dumps(record, sort_keys=True) + "\n"
@@ -1834,7 +1838,8 @@ def _run_continuous_generation_once(
         state.generation.last_error = ""
     run_argv = [*_generation_argv_without_otel(generate_argv), "--seed", str(seed)]
     try:
-        state.legacy.main(run_argv)
+        with _forward_generation_logs(state, where="continuous-generate"):
+            state.legacy.main(run_argv)
         rows = load_anomaly_rows(state.output_dir / "anomalies.csv")
         state.replace_generated_rows(rows)
     except SystemExit as exc:  # pragma: no cover - defensive background boundary
@@ -1873,7 +1878,8 @@ def _stream_current_otel_once(state: SimulationState, *, idle_thread_state: str)
         last_started_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
     )
     try:
-        _run_otel_streams(state)
+        with _forward_generation_logs(state, where="otel-stream"):
+            _run_otel_streams(state)
     except Exception as exc:  # pragma: no cover - defensive thread boundary
         state.update_otel_status(thread="failed", error=str(exc))
         # Also route to the operator error sink: the /v1/state otel_status.error

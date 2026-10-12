@@ -4,7 +4,9 @@ import contextlib
 import datetime as _dt
 import gzip
 import importlib
+import io
 import json
+import logging
 import os
 import shutil
 import socket
@@ -4503,6 +4505,51 @@ def test_continuous_generation_records_system_exit(amc, tmp_path, monkeypatch):
     # A-072: SystemExit is summarized with its code, not just str(exc), so a
     # bare-code exit ("2") is no longer an opaque last_error.
     assert state.generation.last_error == "SystemExit(code='bad generated args')"
+
+
+def test_continuous_generation_forwards_generator_warnings_once_per_pass(amc, tmp_path, monkeypatch):
+    """sd:255: with a structured log configured, a generator warning raised
+    during a regen pass, or during that pass's OTEL stream, lands as one JSONL
+    ``warning`` event. Two passes give two events each, not a stacked
+    handler's four, a warning from another thread is not copied, and no
+    forwarding handler outlives its pass."""
+    state = _build_state(amc, tmp_path, scenarios="cache_leak_restart", days=3)
+    sink = io.StringIO()
+    state.request_logger = server.StructuredRequestLogger(stream=sink)
+    generator_logger = logging.getLogger("anomaly_metric_creator.generation")
+
+    def fake_main(argv):
+        (tmp_path / "anomalies.csv").write_text(
+            "timestamp,component,metric,value,scenario,span_start,span_end\n",
+            encoding="utf-8",
+        )
+        generator_logger.warning("WARNING: regen probe")
+        other = threading.Thread(target=generator_logger.warning, args=("WARNING: other thread",))
+        other.start()
+        other.join()
+
+    def fake_stream(current_state):
+        logging.getLogger("anomaly_metric_creator.otel_stream").warning("WARNING: otel probe")
+
+    monkeypatch.setattr(state.legacy, "main", fake_main)
+    monkeypatch.setattr(server, "_run_otel_streams", fake_stream)
+    state.args.otel_enabled = True
+    for _ in range(2):
+        server._run_continuous_generation_once(
+            state, ["--output-dir", str(tmp_path)], stream_otel=True,
+        )
+
+    events = [json.loads(line) for line in sink.getvalue().splitlines()]
+    assert events == [
+        {"event": "warning", "where": "continuous-generate", "level": "WARNING",
+         "logger": "anomaly_metric_creator.generation", "message": "WARNING: regen probe"},
+        {"event": "warning", "where": "otel-stream", "level": "WARNING",
+         "logger": "anomaly_metric_creator.otel_stream", "message": "WARNING: otel probe"},
+    ] * 2
+    assert not [
+        h for h in logging.getLogger("anomaly_metric_creator").handlers
+        if type(h).__name__ == "_GenerationLogForwarder"
+    ]
 
 
 def test_continuous_generation_marks_otel_disabled_without_streaming(amc, tmp_path, monkeypatch):

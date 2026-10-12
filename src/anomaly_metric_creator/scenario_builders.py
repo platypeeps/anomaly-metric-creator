@@ -680,8 +680,8 @@ class Scenario:
     """A named bundle of primary + cascade specs selectable via --scenarios.
 
     ``days_required`` is the minimum ``--duration-days`` value at which the
-    scenario can fully manifest; below that, ``_resolve_scenarios`` emits a
-    stderr WARNING naming the scenario and drops it. ``severity`` follows the
+    scenario can fully manifest; below that, ``_resolve_scenarios`` logs a
+    WARNING naming the scenario and drops it. ``severity`` follows the
     same vocabulary as individual anomaly specs (``low`` / ``medium`` /
     ``high``); scenarios outside the active ``--signal-level`` hierarchy are
     similarly warn-and-skip. ``components_touched`` is the union of components
