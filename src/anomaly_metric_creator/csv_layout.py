@@ -21,11 +21,15 @@ from __future__ import annotations
 
 import csv
 import heapq
-import sys
+import logging
 from pathlib import Path
 
 from .artifacts import _atomic_artifact_open
 from .timeutil import _parse_csv_timestamp
+
+# Messages keep their literal "WARNING: " prefix: the CLI handler prints the bare
+# message, so stderr stays byte-identical (run_pipeline._ensure_cli_log_handler).
+logger = logging.getLogger(__name__)
 
 
 # Canonical column order for the multi-instance long-form dimension
@@ -97,9 +101,8 @@ def _iter_component_rows(component: str, csv_path: Path):
             # with a header), so this only guards hand-staged debris in a
             # combine/gauge input directory — skip it with a warning instead of
             # raising StopIteration (A-016).
-            print(
-                f"WARNING: {csv_path} has no header row; skipping.",
-                file=sys.stderr,
+            logger.warning(
+                f"WARNING: {csv_path} has no header row; skipping."
             )
             return
         # Detect the Phase 2 dimension column block. The block is the full

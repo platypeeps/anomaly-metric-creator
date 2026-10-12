@@ -17,6 +17,7 @@ Verifies:
 """
 
 import csv
+import logging
 
 import numpy as np
 import pytest
@@ -148,7 +149,7 @@ def test_cache_az_isolation_high_severity_not_in_default_pool(amc):
 # Runtime behavior: auth_pod_failure overrides only i0
 # ---------------------------------------------------------------------------
 
-def test_auth_pod_failure_registry_spec_out_of_range_warns(amc, tmp_path, capsys):
+def test_auth_pod_failure_registry_spec_out_of_range_warns(amc, tmp_path, caplog):
     """The registry ``auth_pod_failure`` primary spec has ``time_offset=12600s``
     (3h30m). Running it through ``generate_component`` with a 200s window must
     log the canonical "time_offset outside [0, N)" WARNING and write no override
@@ -170,18 +171,18 @@ def test_auth_pod_failure_registry_spec_out_of_range_warns(amc, tmp_path, capsys
     )
 
     instances = _three_instances(amc)
-    _run_generate(
-        amc, component, list(specs),
-        anomaly_specs=anomaly_specs,
-        instances=instances,
-        tmp_path=tmp_path,
-        total_seconds=200,
-        interval=10.0,
-    )
+    with caplog.at_level(logging.WARNING, logger="anomaly_metric_creator"):
+        _run_generate(
+            amc, component, list(specs),
+            anomaly_specs=anomaly_specs,
+            instances=instances,
+            tmp_path=tmp_path,
+            total_seconds=200,
+            interval=10.0,
+        )
 
-    captured = capsys.readouterr()
-    assert "time_offset outside" in captured.err, (
-        f"Expected out-of-range WARNING; stderr was {captured.err!r}"
+    assert "time_offset outside" in caplog.text, (
+        f"Expected out-of-range WARNING record; log was {caplog.text!r}"
     )
 
     csv_path = tmp_path / "authservice.csv"
@@ -293,7 +294,7 @@ def test_cache_az_isolation_synthetic_only_matching_az_overridden(amc, tmp_path)
     )
 
 
-def test_cache_az_isolation_no_az_instances_emits_warning(amc, tmp_path, capsys):
+def test_cache_az_isolation_no_az_instances_emits_warning(amc, tmp_path, caplog):
     """When --instances-per-component 3 (az=None for all), the callable filter
     matches zero instances → one WARNING is logged and no override fires."""
     component = "cacheservice"
@@ -311,20 +312,20 @@ def test_cache_az_isolation_no_az_instances_emits_warning(amc, tmp_path, capsys)
 
     # Instances from --instances-per-component have az=None
     instances = _three_instances(amc)
-    _run_generate(
-        amc, component, list(specs),
-        anomaly_specs=anomaly_specs,
-        instances=instances,
-        tmp_path=tmp_path,
-        total_seconds=120,
-        interval=10.0,
-    )
+    with caplog.at_level(logging.WARNING, logger="anomaly_metric_creator"):
+        _run_generate(
+            amc, component, list(specs),
+            anomaly_specs=anomaly_specs,
+            instances=instances,
+            tmp_path=tmp_path,
+            total_seconds=120,
+            interval=10.0,
+        )
 
-    captured = capsys.readouterr()
-    assert "WARNING" in captured.err or "warning" in captured.err.lower(), (
-        "Expected a WARNING about zero-match instance_filter in stderr"
+    assert "WARNING" in caplog.text or "warning" in caplog.text.lower(), (
+        "Expected a WARNING record about zero-match instance_filter"
     )
-    assert "instance_filter" in captured.err.lower(), (
+    assert "instance_filter" in caplog.text.lower(), (
         "WARNING should mention instance_filter"
     )
 

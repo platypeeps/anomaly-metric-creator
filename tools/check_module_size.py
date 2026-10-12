@@ -110,7 +110,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "orchestration (see architecture.md)",
     ),
     "server.py": (
-        1989,
+        1995,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
@@ -131,7 +131,11 @@ RATCHET: dict[str, tuple[int, str]] = {
         "start_test_server and the two CORS header builders, plus its "
         "re-import line; the predicate itself lives in server_config.py; +4 "
         "from sd:3090 for the listen backlog attribute on the bounded server "
-        "class, with its reason",
+        "class, with its reason; +6 from sd:255 for structured generator "
+        "logging: the forwarder import, a log_warning method (three lines) on "
+        "StructuredRequestLogger beside log_error, and one with-line at each "
+        "of the two background call sites; the forwarder lives in "
+        "server_ops_state.py",
     ),
     "server_mcp.py": (
         1453,

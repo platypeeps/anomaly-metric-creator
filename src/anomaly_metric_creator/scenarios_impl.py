@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import sys
+import logging
 import weakref
 from typing import Callable
 
 import numpy as np
 
 from .scenario_catalog import SCENARIOS
+
+# Messages keep their literal "WARNING: " prefix: the CLI handler prints the bare
+# message, so stderr stays byte-identical (run_pipeline._ensure_cli_log_handler).
+logger = logging.getLogger(__name__)
 
 _DEFAULT_RUNTIME_KEY = "__default__"
 _scenario_runtimes: dict[str, weakref.ReferenceType] = {}
@@ -142,7 +146,7 @@ def _resolve_scenarios(
     duration filter (``args.duration_days``) → component filter
     (``args.components``).
 
-    Scenarios dropped by the severity or duration filter emit a stderr
+    Scenarios dropped by the severity or duration filter log a
     ``WARNING: scenario <slug> requires …`` so a misconfigured run is
     diagnosable without re-running with -v. Scenarios with no
     ``components_touched`` intersection with ``args.components`` are dropped
@@ -154,8 +158,8 @@ def _resolve_scenarios(
     and ``args.exclude_scenarios`` exists in ``SCENARIOS``, so this function
     never raises for unknown-slug.
 
-    Iterates the candidate slugs in sorted order so the stderr ``WARNING``
-    lines emitted on severity/duration drops appear in a deterministic
+    Iterates the candidate slugs in sorted order so the ``WARNING``
+    records logged on severity/duration drops appear in a deterministic
     order across runs — set iteration order would otherwise vary and make
     diagnostics harder to diff.
     """
@@ -167,18 +171,16 @@ def _resolve_scenarios(
     for slug in sorted(resolved):
         scenario = scenarios[slug]
         if scenario.severity not in allowed_severities:
-            print(
+            logger.warning(
                 f"WARNING: scenario {slug} requires --signal-level "
-                f"{scenario.severity} (current: {args.signal_level}); skipped.",
-                file=sys.stderr,
+                f"{scenario.severity} (current: {args.signal_level}); skipped."
             )
             continue
         if scenario.days_required > args.duration_days:
-            print(
+            logger.warning(
                 f"WARNING: scenario {slug} requires --duration-days "
                 f">= {scenario.days_required} (current: {args.duration_days}); "
-                "skipped.",
-                file=sys.stderr,
+                "skipped."
             )
             continue
         touched = set(scenario.components_touched)

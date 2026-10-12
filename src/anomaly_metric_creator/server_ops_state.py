@@ -14,19 +14,23 @@ surfaces they use stay stable, and the leaves that name
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import datetime as _dt
+import logging
 import sys
 import threading
 import time
 import traceback
 from dataclasses import dataclass, field
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .server_mutations import DEFAULT_NAMESPACE, SimulationMutations, _format_dt
 from .server_mutations_loader import load_persisted_mutations
 from .server_ops_profiles import OPS_SCENARIO_PROFILES, validate_ops_profiles
+from .run_pipeline import _PACKAGE_LOGGER_NAME
 from .server_ops_support import _parse_optional_timestamp, _parse_user_timestamp
 from .server_traces import DEFAULT_TRACE_LIMIT, CommandTraceStore
 
@@ -132,6 +136,9 @@ class _ErrorSink(Protocol):
         pass
 
     def log_error(self, record: dict[str, Any]) -> None:
+        pass
+
+    def log_warning(self, record: dict[str, Any]) -> None:
         pass
 
 
@@ -514,3 +521,51 @@ def _record_continuous_generation_failure(
             state.replace_generated_rows(load_anomaly_rows(anomalies_path))
         except Exception:  # pragma: no cover - defensive disk-read boundary
             pass
+
+
+class _GenerationLogForwarder(logging.Handler):
+    """Copy package log records from one thread into the structured log."""
+
+    def __init__(self, sink: _ErrorSink, *, where: str, thread_id: int) -> None:
+        super().__init__()
+        self._sink = sink
+        self._where = where
+        self._thread_id = thread_id
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # Only the attaching thread's records: an HTTP thread's warning is not
+        # part of this pass, and a second forwarder must not copy it again.
+        if record.thread != self._thread_id:
+            return
+        try:
+            self._sink.log_warning({
+                "where": self._where,
+                "logger": record.name,
+                "level": record.levelname,
+                "message": record.getMessage(),
+            })
+        except Exception:  # pragma: no cover - logging's own error report
+            self.handleError(record)
+
+
+@contextlib.contextmanager
+def _forward_generation_logs(state: SimulationState, *, where: str) -> Iterator[None]:
+    """Forward generator warnings to ``state.request_logger`` for one pass.
+
+    Serve mode's background generation and OTEL arms run the same generator
+    modules as the CLI. Their warnings still reach stderr through the CLI
+    handler; with ``--structured-log`` this also writes each one as a JSONL
+    ``warning`` event. The handler detaches on exit, so repeated passes never
+    stack handlers. No sink configured means no handler.
+    """
+    sink = getattr(state, "request_logger", None)
+    if sink is None:
+        yield
+        return
+    handler = _GenerationLogForwarder(sink, where=where, thread_id=threading.get_ident())
+    package_logger = logging.getLogger(_PACKAGE_LOGGER_NAME)
+    package_logger.addHandler(handler)
+    try:
+        yield
+    finally:
+        package_logger.removeHandler(handler)

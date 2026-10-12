@@ -280,6 +280,22 @@ operator-side traceback is outside the eval-mode ground-truth wall. Request
 `src/anomaly_metric_creator/server_mcp.py`; `tests/test_server.py`;
 `tests/test_server_mcp.py`.
 
+Generator diagnostics go through `logging`, not `print`. Each generator module
+logs under its own `logging.getLogger(__name__)`, all children of the
+`anomaly_metric_creator` package logger; nothing configures logging at import.
+`main()` attaches one handler to the package logger that prints the bare
+message to the current `sys.stderr`, and each message keeps its literal
+`WARNING: ` prefix, so CLI stderr is byte-identical to the old prints. A direct
+library call outside `main()` reaches whatever handlers the caller configured,
+or Python's last-resort stderr handler when there are none. In serve mode,
+`_forward_generation_logs` also writes each warning from a continuous-generation
+pass or a background OTEL stream to the structured logger as a JSONL `warning`
+event, when one is configured. It forwards only the attaching thread's records
+and detaches after the pass. Sources: `src/anomaly_metric_creator/run_pipeline.py`;
+`src/anomaly_metric_creator/server_ops_state.py`;
+`src/anomaly_metric_creator/server.py`; `tests/test_generator_logging.py`;
+`tests/test_server.py`.
+
 Never write bearer tokens, auth tokens, passwords, cookies, API keys,
 kubeconfig client keys, token-like query parameters, or command secrets to
 memory traces, JSONL logs, SQLite rows, OTEL logs, or debug UI payloads.

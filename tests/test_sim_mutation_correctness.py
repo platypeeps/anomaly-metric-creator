@@ -22,6 +22,7 @@ gap fails here:
 """
 
 import datetime as _dt
+import logging
 import threading
 
 import pytest
@@ -257,14 +258,15 @@ def test_failing_regen_reloads_published_anomalies_from_disk(amc, tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def test_iter_component_rows_empty_csv_warns_and_yields_nothing(amc, tmp_path, capsys):
+def test_iter_component_rows_empty_csv_warns_and_yields_nothing(amc, tmp_path, caplog):
     empty = tmp_path / "apigateway.csv"
     empty.write_text("")
 
-    rows = list(amc._iter_component_rows("apigateway", empty))
+    with caplog.at_level(logging.WARNING, logger="anomaly_metric_creator"):
+        rows = list(amc._iter_component_rows("apigateway", empty))
 
     assert rows == []
-    assert "no header row" in capsys.readouterr().err
+    assert "no header row" in caplog.text
 
 
 # --------------------------------------------------------------------------- #

@@ -15,6 +15,7 @@ Verifies:
 """
 
 import csv
+import logging
 
 import pytest
 
@@ -378,8 +379,11 @@ def test_instance_filter_multi_id_targets_multiple_instances(amc, tmp_path):
 
 
 def test_instance_filter_no_active_match_emits_warning_and_skips(amc, tmp_path,
-                                                                   capsys):
-    """A filter that matches zero active instances logs a WARNING and skips."""
+                                                                   caplog):
+    """A filter that matches zero active instances logs a WARNING and skips.
+
+    A direct ``generate_component`` call is not the CLI entrypoint, so the
+    warning is a log record here; ``main()`` prints it to stderr."""
     component = "apigateway"
     specs = amc.COMPONENTS[component][:amc.DEFAULT_METRICS_PER_COMPONENT[component]]
     metric = "error_rate"
@@ -393,19 +397,19 @@ def test_instance_filter_no_active_match_emits_warning_and_skips(amc, tmp_path,
             "instance_filter": ["i_does_not_exist"],
         }
     ]
-    _run_generate(
-        amc, component, list(specs),
-        anomaly_specs=anomaly_specs,
-        instances=_three_instances(amc),
-        tmp_path=tmp_path,
-        total_seconds=120, interval=10.0,
-    )
+    with caplog.at_level(logging.WARNING, logger="anomaly_metric_creator"):
+        _run_generate(
+            amc, component, list(specs),
+            anomaly_specs=anomaly_specs,
+            instances=_three_instances(amc),
+            tmp_path=tmp_path,
+            total_seconds=120, interval=10.0,
+        )
 
-    captured = capsys.readouterr()
-    assert "instance_filter" in captured.err.lower(), (
-        f"Expected 'instance_filter' WARNING in stderr; got {captured.err!r}"
+    assert "instance_filter" in caplog.text.lower(), (
+        f"Expected 'instance_filter' WARNING record; got {caplog.text!r}"
     )
-    assert "warning" in captured.err.lower()
+    assert "warning" in caplog.text.lower()
 
     # And no instance shows the override value
     csv_path = tmp_path / f"{component}.csv"

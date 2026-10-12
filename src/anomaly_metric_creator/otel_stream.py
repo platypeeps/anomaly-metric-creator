@@ -13,8 +13,8 @@ import datetime
 import heapq
 import http.client
 import json
+import logging
 import shlex
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -42,6 +42,10 @@ from .redaction import _masked_headers, _redact_sensitive_headers
 from .timeutil import _dt_to_unix_nanos, _parse_csv_timestamp
 
 __all__ = ["stream_otel_gauges", "stream_otel_signals"]
+
+# Messages keep their literal "WARNING: " prefix: the CLI handler prints the bare
+# message, so stderr stays byte-identical (run_pipeline._ensure_cli_log_handler).
+logger = logging.getLogger(__name__)
 
 
 def _write_activity(log_file, event: str, **fields) -> None:
@@ -144,7 +148,7 @@ def _post_with_retries(
     ``batch_start_ts``/``batch_end_ts``/``data_points`` for gauges); the
     ``signal, endpoint, *id_fields, attempt, *verbose`` order is preserved
     byte-for-byte from the pre-unification records. ``subject`` is the human
-    string for the stderr WARNING lines.
+    string for the logged WARNING lines.
 
     Catches ``urllib.error.URLError`` (covering ``HTTPError``) **and**
     ``http.client.HTTPException`` — e.g. ``BadStatusLine`` from a malformed
@@ -183,9 +187,8 @@ def _post_with_retries(
                 if isinstance(exc, urllib.error.HTTPError):
                     err_fields["status"] = exc.code
             if attempts > max_retries:
-                print(
-                    f"WARNING: OTEL {signal} stream failed for {subject}: {exc}",
-                    file=sys.stderr,
+                logger.warning(
+                    f"WARNING: OTEL {signal} stream failed for {subject}: {exc}"
                 )
                 _write_activity(
                     log_file,
@@ -198,10 +201,9 @@ def _post_with_retries(
                 )
                 return False
             backoff = min(2 ** (attempts - 1), _OTEL_BACKOFF_MAX_SECONDS)
-            print(
+            logger.warning(
                 f"WARNING: OTEL {signal} stream retry {attempts}/{max_retries} for "
-                f"{subject}: {exc}",
-                file=sys.stderr,
+                f"{subject}: {exc}"
             )
             _write_activity(
                 log_file,
@@ -231,7 +233,7 @@ def stream_otel_signals(
 ) -> int:
     """Replay anomalies to multiple OTLP/HTTP endpoints with timeline-aware pacing.
 
-    Failures are logged to stderr and do not stop generation. When
+    Failures are logged as warnings and do not stop generation. When
     ``activity_log_path`` is set, also records one line per send attempt,
     retry, and failure to that file. When ``verbose`` is true, those records
     additionally include the raw request body, request headers (auth tokens

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import datetime
 import heapq
+import logging
 import math
-import sys
 import weakref
 from typing import Callable
 
@@ -42,6 +42,10 @@ from .models_impl import Instance, MetricSpec, _validate_instance_list
 from .runtime_defaults import SECONDS_PER_DAY, START
 from .topology_compose import _arrays_equal_dict, _sat_tuples_equal_dict
 from . import topology_impl as _topology_impl
+
+# Messages keep their literal "WARNING: " prefix: the CLI handler prints the bare
+# message, so stderr stays byte-identical (run_pipeline._ensure_cli_log_handler).
+logger = logging.getLogger(__name__)
 
 _DEFAULT_RUNTIME_KEY = "__default__"
 _generation_runtimes = {}
@@ -153,7 +157,7 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
     ``floor(total_seconds / interval)``. Each anomaly's ``time_offset`` is
     mapped to the nearest row via ``round(time_offset / interval)``; specs
     that fall outside ``[0, n_rows)`` are skipped with the existing
-    stderr warning.
+    logged warning.
     """
     file_path = base_dir / f"{component_name}.csv"
     fieldnames = [s.name for s in specs]
@@ -243,11 +247,10 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
         # regardless of dict iteration order; mirrors the convention in
         # ``_resolve_scenarios``.
         for metric, desc in sorted(filter_skips):
-            print(
+            logger.warning(
                 f"WARNING: {component_name}: skipping anomaly spec "
                 f"metric={metric!r} description={desc!r} — instance_filter "
-                f"matched zero active instances.",
-                file=sys.stderr,
+                f"matched zero active instances."
             )
 
     # Keep in-range anomaly spans compact here. The override loop below merges
@@ -287,11 +290,10 @@ def generate_component(component_name, specs: list[MetricSpec], anomaly_specs,
             )
         else:
             include_hint = "Check anomaly specs for negative time_offset values."
-        print(
+        logger.warning(
             f"WARNING: {component_name}: skipping {len(out_of_range)} anomaly spec(s) "
             f"with time_offset outside [0, {total_seconds}). "
-            f"{include_hint}",
-            file=sys.stderr,
+            f"{include_hint}"
         )
 
     # Fail loudly on identical (metric, time_offset) specs — the previous
