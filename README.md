@@ -615,7 +615,11 @@ Supported command families in server mode:
   and `diff` with scenario-aware mutable simulator state, including
   multi-document YAML/JSON apply files and command-mode dry-run output for
   supported create/apply flows
-- `kubectl wait`, `exec`, and `port-forward` with simulated diagnostic responses
+- `kubectl wait` and `port-forward` with simulated diagnostic responses
+- `kubectl exec POD -- COMMAND` for the probes `env`, `printenv [NAME...]`,
+  `curl`, and `df -h` (its data volume shows the pod's storage pressure);
+  tokens after `--` are the command, and any other command or an unknown
+  pod returns a nonzero exit instead of a simulated success
 - `helm version|env|list|status|history|test|template`
 - `helm get values|manifest|notes|all|hooks`
 - `helm install|upgrade|rollback|uninstall` with mutable release-history and

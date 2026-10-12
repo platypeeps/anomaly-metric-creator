@@ -306,6 +306,106 @@ def test_kubectl_logs_rejects_missing_container_value(amc, tmp_path, command):
     assert "requires a container name" in logs["result"]["stderr"]
 
 
+def test_parse_command_keeps_tokens_after_double_dash_verbatim():
+    parsed = server.parse_command(
+        command="kubectl exec apigateway-0 -n saas-prod -- ls -la -n other"
+    )
+
+    assert parsed.positionals == ("exec", "apigateway-0", "--", "ls", "-la", "-n", "other")
+    assert parsed.namespace == "saas-prod"
+    assert parsed.flags == {"namespace": "saas-prod"}
+
+
+def test_kubectl_exec_df_reflects_storage_pressure(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    database = server.run_command(state, command="kubectl exec database-0 -n saas-prod -- df -h")
+    healthy = server.run_command(state, command="kubectl exec apigateway-0 -n saas-prod -- df -h")
+
+    assert database["result"]["exit_code"] == 0
+    assert database["result"]["support_status"] == "supported"
+    assert database["result"]["matched_rule_id"] == "kubectl.exec.df"
+    assert database["result"]["stderr"] == ""
+    assert database["result"]["stdout"].startswith("Filesystem")
+    assert "92% /var/lib/database" in database["result"]["stdout"]
+    assert "61% /var/lib/apigateway" in healthy["result"]["stdout"]
+
+
+def test_kubectl_exec_curl_keeps_its_arguments(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    curl = server.run_command(
+        state,
+        command="kubectl exec apigateway-0 -n saas-prod -- curl -s http://localhost:8080/healthz",
+    )
+
+    assert curl["result"]["exit_code"] == 0
+    assert curl["result"]["support_status"] == "supported"
+    assert curl["result"]["matched_rule_id"] == "kubectl.exec.curl"
+    assert "x-amc-component: apigateway" in curl["result"]["stdout"]
+
+
+def test_kubectl_exec_printenv_prints_named_values(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    found = server.run_command(
+        state, command="kubectl exec database-0 -n saas-prod -- printenv SERVICE_NAME"
+    )
+    missing = server.run_command(
+        state, command="kubectl exec database-0 -n saas-prod -- printenv NO_SUCH_VAR"
+    )
+
+    assert found["result"]["exit_code"] == 0
+    assert found["result"]["stdout"] == "database\n"
+    assert missing["result"]["exit_code"] == 1
+    assert missing["result"]["stdout"] == ""
+    assert missing["result"]["support_status"] == "supported"
+
+
+def test_kubectl_exec_unsupported_command_keeps_full_argv(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    listing = server.run_command(state, command="kubectl exec apigateway-0 -n saas-prod -- ls -la")
+
+    assert listing["result"]["exit_code"] == 1
+    assert listing["result"]["stdout"] == ""
+    assert listing["result"]["support_status"] == "unsupported"
+    assert listing["result"]["matched_rule_id"] == "kubectl.exec.unsupported-command"
+    assert '"ls -la"' in listing["result"]["stderr"]
+    assert "not modeled" in listing["result"]["stderr"]
+
+
+def test_kubectl_exec_unknown_pod_is_not_found(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    missing = server.run_command(state, command="kubectl exec ghost-0 -n saas-prod -- env")
+
+    assert missing["result"]["exit_code"] == 1
+    assert missing["result"]["stdout"] == ""
+    assert missing["result"]["matched_rule_id"] == "kubectl.not_found"
+    assert 'pods "ghost-0" not found' in missing["result"]["stderr"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "kubectl exec -n saas-prod",
+        "kubectl exec apigateway-0 -n saas-prod",
+        "kubectl exec apigateway-0 -n saas-prod --",
+    ],
+)
+def test_kubectl_exec_requires_pod_and_command(amc, tmp_path, command):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    result = server.run_command(state, command=command)
+
+    assert result["result"]["exit_code"] == 1
+    assert result["result"]["stdout"] == ""
+    assert result["result"]["support_status"] == "partial"
+    assert result["result"]["matched_rule_id"] == "kubectl.exec.usage"
+    assert "POD_NAME and COMMAND are required" in result["result"]["stderr"]
+
+
 def test_helm_and_rollout_responses_reflect_bad_canary(amc, tmp_path):
     state = _build_state(
         amc,

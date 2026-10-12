@@ -53,7 +53,7 @@ _BOOL_FLAGS = {
     "-A", "--all-namespaces", "--previous", "-p", "--follow",
     "--prefix", "--watch", "-w", "--wide", "--show-labels", "--dry-run", "--install",
     "--atomic", "--debug", "--all", "--short", "--recursive", "--wait",
-    "--reuse-values", "--reset-values", "--",
+    "--reuse-values", "--reset-values",
 }
 
 
@@ -74,7 +74,7 @@ _MODELED_FLAGS = {
     "--image", "--schedule", "--set", "--set-string", "--values",
     "--dry-run", "--install", "--atomic", "--debug", "--all", "--short",
     "--recursive", "--api-version", "--patch", "--type", "--wait",
-    "--reuse-values", "--reset-values", "--",
+    "--reuse-values", "--reset-values",
 }
 
 
@@ -235,6 +235,11 @@ def _split_flags(tokens: tuple[str, ...], default_namespace: str) -> tuple[str, 
     i = 0
     while i < len(tokens):
         token = tokens[i]
+        if token == "--":
+            # Everything after the separator is the payload (`kubectl exec POD -- CMD ARGS`),
+            # kept verbatim; flag-shaped tokens there belong to the payload, not to kubectl.
+            positionals.extend(tokens[i:])
+            break
         if token in {"-n", "--namespace"}:
             value = tokens[i + 1] if i + 1 < len(tokens) else ""
             namespace = value or namespace
