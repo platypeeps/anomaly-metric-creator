@@ -113,6 +113,15 @@ _CURATED_COMMANDS = [
     "kubectl delete configmap ghost-cm -n saas-prod",         # ghost generic delete
     "kubectl scale deployment/ghost-dep --replicas=3 -n saas-prod",  # ghost scale
     "kubectl scale deployment --replicas=3 -n saas-prod",     # nameless scale usage
+    # Tokens after `--` are the exec payload, kept verbatim rather than parsed as flags.
+    "kubectl exec apigateway-0 -n saas-prod -- ls -la",       # flag-shaped payload
+    "kubectl exec apigateway-0 -n saas-prod -- -n --token=x", # payload that looks like kubectl flags
+    "kubectl exec apigateway-0 -n saas-prod --",              # separator, no command
+    "kubectl -- get pods",                                    # separator before the verb
+    "helm status simulated-saas -- --debug",                  # separator outside exec
+    "kubectl logs database-0 --since=5m5",                    # duration with a bare trailing number
+    "kubectl logs database-0 --since=.h --timestamps",        # duration with no digits
+    "kubectl logs database-0 --since=" + "9" * 400 + "h",     # duration that overflows a timedelta
 ]
 
 _CURATED_PAYLOADS = [

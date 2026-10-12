@@ -607,15 +607,21 @@ Supported command families in server mode:
 - `kubectl get all|namespaces|pods|configmaps|secrets|deployments|replicasets|daemonsets|services|endpoints|endpointslices|events|hpa|jobs|cronjobs|serviceaccounts|nodes|pvc|statefulsets|ingress`
 - `kubectl describe` for the same synthetic resources where a description is useful
 - `kubectl logs POD` and selector-based logs with `--follow`, `--prefix`,
-  `--previous`, `-c/--container`, `--tail`, and `--since-time`; `-f` is
-  supported for pod-targeted logs
+  `--previous`, `-c/--container`, `--tail`, `--since` (a Go duration such
+  as `5m` or `1h30m`), `--since-time`, and `--timestamps`; `-f` is
+  supported for pod-targeted logs. A malformed or negative `--since`, or
+  `--since` together with `--since-time`, fails as kubectl does
 - `kubectl top pods|nodes`
 - `kubectl rollout status|history|restart|pause|resume|undo deployment/NAME`
 - `kubectl scale`, `delete`, `patch`, manifest-backed `apply -f`, `create`,
   and `diff` with scenario-aware mutable simulator state, including
   multi-document YAML/JSON apply files and command-mode dry-run output for
   supported create/apply flows
-- `kubectl wait`, `exec`, and `port-forward` with simulated diagnostic responses
+- `kubectl wait` and `port-forward` with simulated diagnostic responses
+- `kubectl exec POD -- COMMAND` for the probes `env`, `printenv [NAME...]`,
+  `curl`, and `df -h` (its data volume shows the pod's storage pressure);
+  tokens after `--` are the command, and any other command or an unknown
+  pod returns a nonzero exit instead of a simulated success
 - `helm version|env|list|status|history|test|template`
 - `helm get values|manifest|notes|all|hooks`
 - `helm install|upgrade|rollback|uninstall` with mutable release-history and

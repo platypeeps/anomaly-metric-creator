@@ -21,7 +21,14 @@ import urllib.request
 
 import pytest
 
-from anomaly_metric_creator import server, server_config, server_k8s_resources, server_ops_render, server_traces
+from anomaly_metric_creator import (
+    server,
+    server_config,
+    server_k8s_resources,
+    server_ops_render,
+    server_ops_support,
+    server_traces,
+)
 
 REAL_CLIENT_SMOKE_ENV = "AMC_RUN_REAL_CLIENT_SMOKE"
 
@@ -208,6 +215,75 @@ def test_kubectl_logs_rejects_invalid_since_time(amc, tmp_path):
     assert 'invalid --since-time value "not-a-timestamp"' in logs["result"]["stderr"]
 
 
+@pytest.mark.parametrize(
+    ("value", "seconds"),
+    [
+        ("30s", 30.0), ("5m", 300.0), ("1h30m", 5400.0), ("1.5h", 5400.0),
+        ("250ms", 0.25), ("0", 0.0), ("-2m", -120.0), ("2562047h", 9223369200.0),
+    ],
+)
+def test_parse_go_duration_reads_kubectl_since_values(value, seconds):
+    assert server_ops_support._parse_go_duration(value) == seconds
+
+
+@pytest.mark.parametrize("value", ["", "5", "m", "5x", "1h 30m", "5m-", "--5m", "five", "2562048h", "9" * 400 + "h"])
+def test_parse_go_duration_rejects_malformed_values(value):
+    with pytest.raises(ValueError):
+        server_ops_support._parse_go_duration(value)
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        ("--since=bogus", 'invalid --since value "bogus"'),
+        ("--since 5", 'invalid --since value "5"'),
+        ("--since=-5m", "--since must be greater than 0"),
+        (
+            "--since=5m --since-time=1970-01-01T00:00:00Z",
+            "at most one of `sinceTime` or `sinceSeconds` may be specified",
+        ),
+    ],
+)
+def test_kubectl_logs_rejects_invalid_since(amc, tmp_path, flags, message):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(state, command=f"kubectl logs database-0 -n saas-prod {flags}")
+
+    assert logs["result"]["exit_code"] == 1
+    assert logs["result"]["stdout"] == ""
+    assert logs["result"]["support_status"] == "partial"
+    assert logs["result"]["matched_rule_id"] == "kubectl.logs.since"
+    assert message in logs["result"]["stderr"]
+
+
+def test_kubectl_logs_since_duration_keeps_lines_inside_the_window(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    logs = server.run_command(state, command="kubectl logs database-0 -n saas-prod --since=5m")
+
+    assert logs["result"]["exit_code"] == 0
+    assert logs["result"]["support_status"] == "supported"
+    assert logs["result"]["stderr"] == ""
+    assert "disk_used_pct=92" in logs["result"]["stdout"]
+
+
+def test_kubectl_logs_timestamps_prefix_each_line_with_rfc3339(amc, tmp_path, monkeypatch):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+    monkeypatch.setattr(state.clock, "now", lambda: _dt.datetime(2026, 3, 10, 0, 0, 9, 120000))
+
+    plain = server.run_command(state, command="kubectl logs database-0 -n saas-prod")
+    stamped = server.run_command(state, command="kubectl logs database-0 -n saas-prod --timestamps")
+
+    assert stamped["result"]["exit_code"] == 0
+    assert stamped["result"]["support_status"] == "supported"
+    assert stamped["result"]["stderr"] == ""
+    plain_lines = plain["result"]["stdout"].splitlines()
+    assert plain_lines[0] == "2026-03-10 00:00:09 database write checkpoint took 8421ms, disk_used_pct=92"
+    assert stamped["result"]["stdout"].splitlines() == [
+        f"2026-03-10T00:00:09.12Z {line}" for line in plain_lines
+    ]
+
+
 def test_kubectl_logs_label_selector_renders_matching_pod_logs(amc, tmp_path):
     state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
 
@@ -306,6 +382,106 @@ def test_kubectl_logs_rejects_missing_container_value(amc, tmp_path, command):
     assert logs["result"]["exit_code"] == 1
     assert logs["result"]["support_status"] == "partial"
     assert "requires a container name" in logs["result"]["stderr"]
+
+
+def test_parse_command_keeps_tokens_after_double_dash_verbatim():
+    parsed = server.parse_command(
+        command="kubectl exec apigateway-0 -n saas-prod -- ls -la -n other"
+    )
+
+    assert parsed.positionals == ("exec", "apigateway-0", "--", "ls", "-la", "-n", "other")
+    assert parsed.namespace == "saas-prod"
+    assert parsed.flags == {"namespace": "saas-prod"}
+
+
+def test_kubectl_exec_df_reflects_storage_pressure(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    database = server.run_command(state, command="kubectl exec database-0 -n saas-prod -- df -h")
+    healthy = server.run_command(state, command="kubectl exec apigateway-0 -n saas-prod -- df -h")
+
+    assert database["result"]["exit_code"] == 0
+    assert database["result"]["support_status"] == "supported"
+    assert database["result"]["matched_rule_id"] == "kubectl.exec.df"
+    assert database["result"]["stderr"] == ""
+    assert database["result"]["stdout"].startswith("Filesystem")
+    assert "92% /var/lib/database" in database["result"]["stdout"]
+    assert "61% /var/lib/apigateway" in healthy["result"]["stdout"]
+
+
+def test_kubectl_exec_curl_keeps_its_arguments(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    curl = server.run_command(
+        state,
+        command="kubectl exec apigateway-0 -n saas-prod -- curl -s http://localhost:8080/healthz",
+    )
+
+    assert curl["result"]["exit_code"] == 0
+    assert curl["result"]["support_status"] == "supported"
+    assert curl["result"]["matched_rule_id"] == "kubectl.exec.curl"
+    assert "x-amc-component: apigateway" in curl["result"]["stdout"]
+
+
+def test_kubectl_exec_printenv_prints_named_values(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    found = server.run_command(
+        state, command="kubectl exec database-0 -n saas-prod -- printenv SERVICE_NAME"
+    )
+    missing = server.run_command(
+        state, command="kubectl exec database-0 -n saas-prod -- printenv NO_SUCH_VAR"
+    )
+
+    assert found["result"]["exit_code"] == 0
+    assert found["result"]["stdout"] == "database\n"
+    assert missing["result"]["exit_code"] == 1
+    assert missing["result"]["stdout"] == ""
+    assert missing["result"]["support_status"] == "supported"
+
+
+def test_kubectl_exec_unsupported_command_keeps_full_argv(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    listing = server.run_command(state, command="kubectl exec apigateway-0 -n saas-prod -- ls -la")
+
+    assert listing["result"]["exit_code"] == 1
+    assert listing["result"]["stdout"] == ""
+    assert listing["result"]["support_status"] == "unsupported"
+    assert listing["result"]["matched_rule_id"] == "kubectl.exec.unsupported-command"
+    assert '"ls -la"' in listing["result"]["stderr"]
+    assert "not modeled" in listing["result"]["stderr"]
+
+
+def test_kubectl_exec_unknown_pod_is_not_found(amc, tmp_path):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    missing = server.run_command(state, command="kubectl exec ghost-0 -n saas-prod -- env")
+
+    assert missing["result"]["exit_code"] == 1
+    assert missing["result"]["stdout"] == ""
+    assert missing["result"]["matched_rule_id"] == "kubectl.not_found"
+    assert 'pods "ghost-0" not found' in missing["result"]["stderr"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "kubectl exec -n saas-prod",
+        "kubectl exec apigateway-0 -n saas-prod",
+        "kubectl exec apigateway-0 -n saas-prod --",
+    ],
+)
+def test_kubectl_exec_requires_pod_and_command(amc, tmp_path, command):
+    state = _build_state(amc, tmp_path, scenarios="db_disk_exhaustion")
+
+    result = server.run_command(state, command=command)
+
+    assert result["result"]["exit_code"] == 1
+    assert result["result"]["stdout"] == ""
+    assert result["result"]["support_status"] == "partial"
+    assert result["result"]["matched_rule_id"] == "kubectl.exec.usage"
+    assert "POD_NAME and COMMAND are required" in result["result"]["stderr"]
 
 
 def test_helm_and_rollout_responses_reflect_bad_canary(amc, tmp_path):

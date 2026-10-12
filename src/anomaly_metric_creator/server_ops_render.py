@@ -14,6 +14,7 @@ surfaces they use stay stable. This module never imports
 from __future__ import annotations
 
 import contextlib
+import datetime as _dt
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -34,14 +35,13 @@ from .server_ops_snapshot import (
 from .server_ops_support import (
     _component_from_name,
     _find_named,
+    _parse_go_duration,
     _parse_user_timestamp,
     _snapshot_row_labels,
     _snapshot_row_namespace,
 )
 
 if TYPE_CHECKING:
-    import datetime as _dt
-
     from .server_ops import SimulationState
     from .server_ops_parse import ParsedCommand
 
@@ -563,6 +563,11 @@ def _render_logs_command(state: SimulationState, parsed: ParsedCommand) -> Comma
                     "partial",
                     "kubectl.logs.container",
                 )
+    since_seconds = _logs_since_seconds(parsed)
+    if isinstance(since_seconds, str):
+        return CommandResult(
+            1, "", f'error: invalid --since value "{since_seconds}"\n', "partial", "kubectl.logs.since"
+        )
     since_time = _logs_since_time(parsed)
     if isinstance(since_time, str):
         return CommandResult(
@@ -572,6 +577,12 @@ def _render_logs_command(state: SimulationState, parsed: ParsedCommand) -> Comma
             "partial",
             "kubectl.logs.since-time",
         )
+    # kubectl's own checks, in its order: both forms at once, then a negative duration.
+    if since_seconds and since_time is not None:
+        message = "error: at most one of `sinceTime` or `sinceSeconds` may be specified\n"
+        return CommandResult(1, "", message, "partial", "kubectl.logs.since")
+    if since_seconds and since_seconds < 0:
+        return CommandResult(1, "", "error: --since must be greater than 0\n", "partial", "kubectl.logs.since")
     tail_limit = _logs_tail_limit(parsed)
     if isinstance(tail_limit, str):
         return CommandResult(
@@ -588,7 +599,14 @@ def _render_logs_command(state: SimulationState, parsed: ParsedCommand) -> Comma
     )
     return CommandResult(
         0,
-        _render_logs(state, parsed, pods=pods, since_time=since_time, tail_limit=tail_limit),
+        _render_logs(
+            state,
+            parsed,
+            pods=pods,
+            since_time=since_time,
+            since_seconds=since_seconds,
+            tail_limit=tail_limit,
+        ),
         "",
         "supported",
         rule_id,
@@ -620,6 +638,15 @@ def _logs_since_time(parsed: ParsedCommand) -> _dt.datetime | str | None:
     return str(raw)
 
 
+def _logs_since_seconds(parsed: ParsedCommand) -> float | str | None:
+    raw = parsed.flags.get("--since")
+    if raw is None:
+        return None
+    with contextlib.suppress(ValueError):
+        return _parse_go_duration(str(raw))
+    return str(raw)
+
+
 def _logs_tail_limit(parsed: ParsedCommand) -> int | None | str:
     raw = parsed.flags.get("--tail")
     if raw is None:
@@ -636,16 +663,26 @@ def _render_logs(
     *,
     pods: list[dict[str, Any]] | None = None,
     since_time: _dt.datetime | None = None,
+    since_seconds: float | None = None,
     tail_limit: int | None = 20,
 ) -> str:
     target_pods = pods if pods is not None else _logs_target_pods(state, parsed)
     log_time = state.clock.now()
+    if since_seconds:
+        # A duration is a cutoff relative to the simulated now; kubectl treats 0 as unset.
+        since_time = log_time - _dt.timedelta(seconds=since_seconds)
     if since_time is not None and since_time > log_time:
         return ""
     now = _format_dt(log_time)
     rendered: list[str] = []
     for pod in target_pods:
         rendered.extend(_render_pod_logs(state, parsed, pod, timestamp=now, tail_limit=tail_limit))
+    if parsed.flags.get("--timestamps"):
+        # kubectl --timestamps prepends the kubelet's RFC3339Nano time (trailing zeros trimmed).
+        stamp = log_time.strftime("%Y-%m-%dT%H:%M:%S")
+        fraction = f"{log_time.microsecond:06d}".rstrip("0")
+        stamp += (f".{fraction}" if fraction else "") + "Z "
+        rendered = [stamp + line for line in rendered]
     return "".join(rendered)
 
 
