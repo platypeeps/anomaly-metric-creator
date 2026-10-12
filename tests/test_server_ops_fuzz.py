@@ -119,6 +119,9 @@ _CURATED_COMMANDS = [
     "kubectl exec apigateway-0 -n saas-prod --",              # separator, no command
     "kubectl -- get pods",                                    # separator before the verb
     "helm status simulated-saas -- --debug",                  # separator outside exec
+    "kubectl logs database-0 --since=5m5",                    # duration with a bare trailing number
+    "kubectl logs database-0 --since=.h --timestamps",        # duration with no digits
+    "kubectl logs database-0 --since=" + "9" * 400 + "h",     # duration that overflows a timedelta
 ]
 
 _CURATED_PAYLOADS = [

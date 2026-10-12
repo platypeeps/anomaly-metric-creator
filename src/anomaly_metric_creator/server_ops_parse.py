@@ -53,7 +53,7 @@ _BOOL_FLAGS = {
     "-A", "--all-namespaces", "--previous", "-p", "--follow",
     "--prefix", "--watch", "-w", "--wide", "--show-labels", "--dry-run", "--install",
     "--atomic", "--debug", "--all", "--short", "--recursive", "--wait",
-    "--reuse-values", "--reset-values",
+    "--reuse-values", "--reset-values", "--timestamps",
 }
 
 
@@ -66,7 +66,7 @@ _MODELED_FLAGS = {
     "-o", "--output",
     "-l", "--selector",
     "-c", "--container",
-    "--tail", "--since", "--since-time", "--follow", "--prefix",
+    "--tail", "--since", "--since-time", "--follow", "--prefix", "--timestamps",
     "--previous", "-p",
     "--wide", "--show-labels",
     "--field-selector", "--sort-by", "--for", "--timeout",
