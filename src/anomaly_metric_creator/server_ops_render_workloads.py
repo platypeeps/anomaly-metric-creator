@@ -22,7 +22,7 @@ from .server_mutations import _resource_prefix
 from .server_ops_parse import _KIND_ALIASES, _first_flag_value, _normalize_kind
 from .server_ops_render_manifest import _mutation_snapshot_kind
 from .server_ops_snapshot import _component_health, _replica_count, resource_snapshot
-from .server_ops_support import _component_from_name, _find_named
+from .server_ops_support import _find_named
 
 if TYPE_CHECKING:
     from .server_ops import SimulationState
@@ -293,22 +293,72 @@ def _render_wait(state: SimulationState, parsed: ParsedCommand) -> str:
     return f"{prefix}/{component} condition pending: {health['deployment_status']}\n"
 
 
-def _render_exec(state: SimulationState, parsed: ParsedCommand) -> str:
+_EXEC_PROBES = "env, printenv [NAME...], curl, df -h"
+
+
+def _render_exec(state: SimulationState, parsed: ParsedCommand) -> CommandResult:
+    # Explicit probe shapes only, never a shell: anything else is reported as unsupported.
     pod_name = parsed.resource_name
-    component = _component_from_name(pod_name, state.components)
-    if len(parsed.positionals) > 2 and "--" in parsed.positionals:
-        command = " ".join(parsed.positionals[parsed.positionals.index("--") + 1:])
+    if "--" in parsed.positionals:
+        payload = list(parsed.positionals[parsed.positionals.index("--") + 1:])
     else:
-        command = " ".join(parsed.positionals[2:]) or "healthcheck"
-    if any(token in command for token in {"env", "printenv"}):
-        return (
-            f"SERVICE_NAME={component}\n"
-            f"NAMESPACE={state.namespace}\n"
-            f"SCENARIOS={','.join(_exposed_active_scenarios(state))}\n"
+        payload = list(parsed.positionals[2:])
+    if not pod_name or pod_name == "--" or not payload:
+        return CommandResult(
+            1,
+            "",
+            "error: expected 'exec POD_NAME COMMAND [ARG1] [ARG2] ... [ARGN]'.\n"
+            "POD_NAME and COMMAND are required arguments for the exec command\n",
+            "partial",
+            "kubectl.exec.usage",
         )
-    if "curl" in command:
-        return f"HTTP/1.1 200 OK\nx-amc-component: {component}\n\nok\n"
-    return f"{pod_name}: simulated exec completed for `{command}`\n"
+    pod = _find_named(resource_snapshot(state)["pods"], pod_name)
+    if pod is None:
+        return _not_found("pods", pod_name)
+    component = str(pod["component"])
+    program, args = payload[0].rsplit("/", 1)[-1], payload[1:]
+    env = {
+        "SERVICE_NAME": component,
+        "NAMESPACE": state.namespace,
+        "SCENARIOS": ",".join(_exposed_active_scenarios(state)),
+    }
+    if (program == "env" and not args) or (program == "printenv" and not args):
+        stdout = "".join(f"{name}={value}\n" for name, value in env.items())
+        return CommandResult(0, stdout, "", "supported", "kubectl.exec.env")
+    if program == "printenv":
+        values = [env[name] for name in args if name in env]
+        exit_code = 0 if len(values) == len(args) else 1
+        stdout = "".join(f"{value}\n" for value in values)
+        return CommandResult(exit_code, stdout, "", "supported", "kubectl.exec.printenv")
+    if program == "curl":
+        stdout = f"HTTP/1.1 200 OK\nx-amc-component: {component}\n\nok\n"
+        return CommandResult(0, stdout, "", "supported", "kubectl.exec.curl")
+    if program == "df" and args == ["-h"]:
+        return CommandResult(0, _render_exec_df(state, component), "", "supported", "kubectl.exec.df")
+    return CommandResult(
+        1,
+        "",
+        f'error: exec command "{" ".join(payload)}" is not modeled by the simulator; '
+        f"modeled probes: {_EXEC_PROBES}\n",
+        "unsupported",
+        "kubectl.exec.unsupported-command",
+    )
+
+
+def _render_exec_df(state: SimulationState, component: str) -> str:
+    # The data volume reads the same pvc_used_pct the PVC rows show, so storage pressure is visible here too.
+    used_pct = int(_component_health(state, component)["pvc_used_pct"])
+    used_g = round(200 * used_pct / 100)
+    rows = [
+        ("Filesystem", "Size", "Used", "Avail", "Use%", "Mounted on"),
+        ("overlay", "100G", "38G", "62G", "38%", "/"),
+        ("tmpfs", "64M", "0", "64M", "0%", "/dev"),
+        ("/dev/nvme1n1", "200G", f"{used_g}G", f"{200 - used_g}G", f"{used_pct}%", f"/var/lib/{component}"),
+    ]
+    return "".join(
+        f"{fs:<15}{size:>5}{used:>6}{avail:>6}{pct:>5} {mount}\n"
+        for fs, size, used, avail, pct, mount in rows
+    )
 
 
 def _render_port_forward(parsed: ParsedCommand) -> str:

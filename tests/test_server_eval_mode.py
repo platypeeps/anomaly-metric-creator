@@ -192,7 +192,7 @@ def _request(method, base_url, path, headers=None, data=None):
 def _ops_surface_blob(base_url, pod_name):
     """Serialize every investigation-open ops surface that renders scenario
     data: the MCP `kubectl_get` tool (ConfigMap + pod rows), the
-    `/v1/commands` command API (helm values, exec env, configmap), and the
+    `/v1/commands` command API (helm values, exec env and df, configmap), and the
     real Kubernetes REST facade (ConfigMap object). Returns one string for a
     slug-presence sweep.
     """
@@ -206,6 +206,7 @@ def _ops_surface_blob(base_url, pod_name):
     for command in (
         "helm get values simulated-saas -n saas-prod",
         f"kubectl exec {pod_name} -n saas-prod -- env",
+        f"kubectl exec {pod_name} -n saas-prod -- df -h",
         "kubectl get configmap simulated-saas-config -n saas-prod -o yaml",
     ):
         _s, body = _post(base_url, "/v1/commands", {"command": command})

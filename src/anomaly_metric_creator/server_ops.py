@@ -292,7 +292,7 @@ def _render_kubectl(state: SimulationState, parsed: ParsedCommand) -> CommandRes
     if parsed.verb == "wait":
         return CommandResult(0, _render_wait(state, parsed), "", "supported", "kubectl.wait")
     if parsed.verb == "exec":
-        return CommandResult(0, _render_exec(state, parsed), "", "supported", "kubectl.exec")
+        return _render_exec(state, parsed)
     if parsed.verb == "port-forward":
         return CommandResult(
             0, _render_port_forward(parsed), "", "supported", "kubectl.port-forward"

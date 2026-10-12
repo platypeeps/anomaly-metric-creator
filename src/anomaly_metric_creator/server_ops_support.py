@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as _dt
+import re
 from typing import TYPE_CHECKING, Any
 
 from .server_mutations import DEFAULT_NAMESPACE
@@ -60,6 +61,25 @@ def _parse_user_timestamp(value: str) -> _dt.datetime:
         with contextlib.suppress(ValueError):
             return _dt.datetime.strptime(value, fmt)
     raise ValueError(f"unsupported timestamp format: {value!r}")
+
+
+_GO_DURATION_UNITS = {"ns": 1e-9, "us": 1e-6, "µs": 1e-6, "μs": 1e-6, "ms": 1e-3, "s": 1.0, "m": 60.0, "h": 3600.0}
+_GO_DURATION_MAX_SECONDS = (2**63 - 1) / 1e9
+_GO_DURATION_PART = r"(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)"
+
+
+def _parse_go_duration(value: str) -> float:
+    """Seconds in a Go ``time.ParseDuration`` string, the grammar of kubectl's ``--since``."""
+    sign = -1.0 if value[:1] == "-" else 1.0
+    body = value[1:] if value[:1] in {"-", "+"} else value
+    if body == "0":
+        return 0.0
+    if not re.fullmatch(f"(?:{_GO_DURATION_PART})+", body):
+        raise ValueError(f"invalid duration: {value!r}")
+    seconds = sum(float(number) * _GO_DURATION_UNITS[unit] for number, unit in re.findall(_GO_DURATION_PART, body))
+    if seconds > _GO_DURATION_MAX_SECONDS:  # Go stores a duration in int64 nanoseconds
+        raise ValueError(f"invalid duration: {value!r}")
+    return sign * seconds
 
 
 def _parse_optional_timestamp(value: str | None) -> _dt.datetime | None:
