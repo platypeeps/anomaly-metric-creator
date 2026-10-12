@@ -7,6 +7,13 @@ authoritative history is the GitHub release notes and the git commit log; the
 
 ## Unreleased
 
+- The `/debug` console now follows the shared design foundation: IBM Plex
+  served from the package (`GET /debug/static/*`, no network), a Dark, Light or
+  System theme control, and state shown with a glyph beside its colour. A failed
+  refresh now reads as unknown with the reason instead of a stale "live". Rows
+  open from the keyboard, and below 700px each table row stacks with its column
+  names. The shell, its data endpoints and eval mode's `404` are unchanged;
+  eval mode also hides `/debug/static/*`.
 - `amc serve` now listens with a backlog of 128 connections instead of
   Python's default of 5. Under load, `kubectl` discovery opens more parallel
   connections than 5, and macOS reset the extra ones, which `kubectl` reported

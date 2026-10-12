@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import server_mcp
-from .server_debug_ui import DEBUG_HTML
+from .server_debug_ui import DEBUG_HTML, DEBUG_STATIC_PREFIX, debug_static_asset
 from .server_mutations import (
     HelmReleaseMutation as HelmReleaseMutation,  # noqa: F401
     SimulationMutations as SimulationMutations,  # noqa: F401
@@ -64,7 +64,8 @@ CORS_ALLOW_HEADERS = "authorization, content-type, accept"
 # rendering of the manifest — same descriptions and event ids), and the
 # whole /v1/debug/* console surface (command traces carry active scenarios;
 # search/unsupported/commands expose the manifest). The debug UI shell
-# (`/`, `/debug`) reads all of the above.
+# (`/`, `/debug`) reads all of the above; its stylesheet, script and fonts
+# (`/debug/static/*`) hide with it, since the console is their only reader.
 #
 # This is the single classification registry: `_rubric_endpoint` is the
 # only place a path is judged rubric-bearing, and `test_server_eval_mode`
@@ -78,7 +79,7 @@ _RUBRIC_ENDPOINT_EXACT = frozenset({
     "/v1/state",
     "/v1/logs/stream",
 })
-_RUBRIC_ENDPOINT_PREFIXES = ("/v1/debug",)
+_RUBRIC_ENDPOINT_PREFIXES = ("/v1/debug", "/debug/static")
 
 # Routes that stay open in eval mode: the investigation surface an agent is
 # meant to use, plus liveness. Kept as an explicit set so the completeness
@@ -480,6 +481,14 @@ def make_handler(
                 if path == "/" or path == "/debug":
                     self._send_html(200, DEBUG_HTML)
                     return
+                if path.startswith(DEBUG_STATIC_PREFIX):
+                    # Open like the shell: it carries no data, only the look.
+                    asset = debug_static_asset(path)
+                    if asset is None:
+                        self._send_json(404, {"error": "not found"})
+                    else:
+                        self._send_asset(*asset)
+                    return
                 if not self._is_authorized():
                     self._send_unauthorized(path)
                     return
@@ -875,6 +884,12 @@ def make_handler(
             body = text.encode("utf-8")
             self.send_response(status)
             self._send_common_headers("text/html; charset=utf-8", len(body))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_asset(self, content_type: str, body: bytes) -> None:
+            self.send_response(200)
+            self._send_common_headers(content_type, len(body))
             self.end_headers()
             self.wfile.write(body)
 

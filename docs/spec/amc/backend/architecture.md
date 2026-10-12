@@ -331,7 +331,8 @@ unsupported summaries; `server_mutations.py` for overlay state;
 / `_vouch_no_flag_generate_keys` / `_parse_serve_args` cluster), a leaf that
 imports nothing from `server.py` and reaches the generate parser only through a
 call-time `legacy` import;
-`server_debug_ui.py` for inline HTML/CSS/JS; `server_mcp.py` for the MCP
+`server_debug_ui.py` for the inline HTML/JS shell and the lookup of its static
+files in `debug_static/` (design tokens, theme script, stylesheet, IBM Plex); `server_mcp.py` for the MCP
 (Model Context Protocol) facade served at `POST /mcp` (stateless JSON-RPC
 plus the read-only tool registry and the eval-mode ground-truth wall);
 `server_commands.py`, `server_kubernetes.py`, and `server_helm.py` for focused

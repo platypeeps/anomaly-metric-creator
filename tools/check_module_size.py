@@ -110,7 +110,7 @@ RATCHET: dict[str, tuple[int, str]] = {
         "orchestration (see architecture.md)",
     ),
     "server.py": (
-        1995,
+        2010,
         "debt: HTTP serve facade, not yet decomposed; -130 from "
         "08-15-server-alias-getattr-delegation, which replaced the 227-line "
         "server_ops alias block with a module __getattr__ plus 40 explicit "
@@ -135,17 +135,22 @@ RATCHET: dict[str, tuple[int, str]] = {
         "logging: the forwarder import, a log_warning method (three lines) on "
         "StructuredRequestLogger beside log_error, and one with-line at each "
         "of the two background call sites; the forwarder lives in "
-        "server_ops_state.py",
+        "server_ops_state.py; "
+        "+15 from sd:3587 for the /debug/static branch in do_GET, its asset "
+        "sender, and the import and registry lines that hide it in eval mode; "
+        "the asset lookup lives in server_debug_ui.py",
     ),
     "server_mcp.py": (
         1453,
         "debt: MCP surface, not yet decomposed",
     ),
     "server_debug_ui.py": (
-        1194,
+        1008,
         "debt: debug UI, not yet decomposed; +5 for the csvCell CSV-formula "
         "guard (08-15-debug-ui-csv-formula-neutralization), a non-separable "
-        "addition inside the embedded UI template",
+        "addition inside the embedded UI template; net -186 from sd:3587, "
+        "which moved the stylesheet to debug_static/debug.css and added the "
+        "state-grammar helpers, the theme control and the asset lookup",
     ),
     "server_traces.py": (
         1086,

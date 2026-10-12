@@ -1,6 +1,38 @@
-"""Inline debug UI shell for server mode."""
+"""Inline debug UI shell for server mode.
+
+The page body and script stay inline; the stylesheet, the theme script and the
+IBM Plex faces are the files in ``debug_static/``, served from ``/debug/static/``.
+"""
 
 from __future__ import annotations
+
+from pathlib import Path
+
+DEBUG_STATIC_PREFIX = "/debug/static/"
+_STATIC_DIR = Path(__file__).resolve().parent / "debug_static"
+_STATIC_TYPES = {
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".woff2": "font/woff2",
+}
+
+
+def debug_static_asset(path: str) -> tuple[str, bytes] | None:
+    """Return ``(content type, body)`` for a shipped asset, or ``None``.
+
+    Only a stylesheet, script or font directly in ``debug_static/`` or its
+    ``fonts/`` folder is served; anything that resolves elsewhere is refused.
+    """
+    if not path.startswith(DEBUG_STATIC_PREFIX):
+        return None
+    try:
+        target = (_STATIC_DIR / path[len(DEBUG_STATIC_PREFIX):]).resolve()
+        content_type = _STATIC_TYPES.get(target.suffix)
+        if content_type is None or target.parent not in {_STATIC_DIR, _STATIC_DIR / "fonts"}:
+            return None
+        return content_type, target.read_bytes()
+    except (OSError, ValueError):
+        return None
 
 
 DEBUG_HTML = r"""<!doctype html>
@@ -9,287 +41,18 @@ DEBUG_HTML = r"""<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AMC Debug Console</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f5f7f8;
-      --panel: #ffffff;
-      --line: #d8dee4;
-      --text: #1f2933;
-      --muted: #5f6b76;
-      --ok: #0f7b43;
-      --warn: #a15c00;
-      --bad: #b42318;
-      --accent: #1b65a7;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color: var(--text);
-      background: var(--bg);
-    }
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 3;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 12px 18px;
-      border-bottom: 1px solid var(--line);
-      background: #ffffff;
-    }
-    h1, h2 { margin: 0; font-weight: 650; letter-spacing: 0; }
-    h1 { font-size: 18px; }
-    h2 { font-size: 15px; }
-    main {
-      display: grid;
-      grid-template-columns: minmax(0, 1.4fr) minmax(340px, 0.8fr);
-      gap: 12px;
-      padding: 12px;
-    }
-    section {
-      min-width: 0;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--panel);
-    }
-    section > .bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-    }
-    .stack { display: grid; gap: 12px; }
-    .metrics {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
-      padding: 12px;
-    }
-    .metric {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 8px;
-      min-height: 62px;
-    }
-    .mini-charts {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
-      padding: 0 12px 12px;
-    }
-    .mini-chart {
-      display: grid;
-      gap: 6px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 8px;
-    }
-    .bartrack {
-      height: 8px;
-      overflow: hidden;
-      border-radius: 999px;
-      background: #edf1f4;
-    }
-    .barfill {
-      height: 100%;
-      min-width: 2px;
-      border-radius: 999px;
-      background: var(--accent);
-    }
-    .label { color: var(--muted); font-size: 12px; }
-    .value { margin-top: 3px; font-size: 18px; font-weight: 650; overflow-wrap: anywhere; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-    }
-    th, td {
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      vertical-align: top;
-      overflow-wrap: anywhere;
-    }
-    th { color: var(--muted); font-size: 12px; font-weight: 650; }
-    tr:hover td { background: #f9fbfc; }
-    .status {
-      display: inline-flex;
-      align-items: center;
-      min-height: 22px;
-      padding: 1px 7px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      font-size: 12px;
-      font-weight: 650;
-      white-space: nowrap;
-    }
-    .supported { color: var(--ok); border-color: #9dd7b8; background: #eefaf3; }
-    .partial { color: var(--warn); border-color: #e8c68e; background: #fff8eb; }
-    .unsupported { color: var(--bad); border-color: #efaaa3; background: #fff1f0; }
-    tr.selected td { background: #eef5fb; }
-    #commands tr, #searchResults tr, #scenarios tr, #profiles tr { cursor: pointer; }
-    .detail-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      padding: 0 12px 12px;
-    }
-    .detail-grid table, .scenario-detail table { font-size: 12px; }
-    .detail-grid th, .scenario-detail th { width: 42%; }
-    .scenario-shell { padding: 12px; }
-    .scenario-detail {
-      border-top: 1px solid var(--line);
-      padding-top: 12px;
-      margin-top: 12px;
-    }
-    .scenario-head {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 10px;
-    }
-    .scenario-head h3 { margin: 0; font-size: 15px; letter-spacing: 0; }
-    .scenario-head .muted { font-size: 12px; }
-    .scenario-section-title {
-      margin: 12px 0 6px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-    }
-    .cmdbar {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 8px;
-      padding: 12px;
-      border-bottom: 1px solid var(--line);
-    }
-    .searchbar {
-      display: grid;
-      grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.75fr) minmax(0, 0.75fr) auto;
-      gap: 8px;
-      padding: 12px;
-      border-bottom: 1px solid var(--line);
-    }
-    .filterbar {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 8px;
-      padding: 12px;
-    }
-    .actions {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    input, button, select {
-      font: inherit;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      min-height: 34px;
-      padding: 6px 9px;
-      background: #fff;
-    }
-    button {
-      color: #fff;
-      background: var(--accent);
-      border-color: var(--accent);
-      cursor: pointer;
-      font-weight: 650;
-    }
-    button.secondary {
-      color: var(--accent);
-      background: #eef5fb;
-      border-color: #b8d2e8;
-    }
-    button.small {
-      min-height: 28px;
-      padding: 4px 7px;
-      font-size: 12px;
-    }
-    .freshness {
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      padding: 2px 8px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      background: #f9fbfc;
-      color: var(--muted);
-      font-size: 12px;
-      white-space: nowrap;
-    }
-    .timeline-kind {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-      text-transform: uppercase;
-    }
-    .resource-row { cursor: pointer; }
-    .drawer {
-      position: fixed;
-      top: 58px;
-      right: 12px;
-      bottom: 12px;
-      z-index: 5;
-      display: none;
-      width: min(620px, calc(100vw - 24px));
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      box-shadow: 0 18px 44px rgb(15 23 32 / 18%);
-    }
-    .drawer.open {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-    }
-    .drawer-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-    }
-    .drawer pre {
-      max-height: none;
-      height: 100%;
-      border-top: 0;
-    }
-    pre {
-      margin: 0;
-      padding: 12px;
-      max-height: 520px;
-      overflow: auto;
-      border-top: 1px solid var(--line);
-      background: #0f1720;
-      color: #e5edf5;
-      font-size: 12px;
-      line-height: 1.45;
-    }
-    .muted { color: var(--muted); }
-    @media (max-width: 1000px) {
-      main { grid-template-columns: 1fr; }
-      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .mini-charts, .filterbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-  </style>
+  <link rel="stylesheet" href="/debug/static/tokens.css">
+  <link rel="stylesheet" href="/debug/static/fonts.css">
+  <link rel="stylesheet" href="/debug/static/debug.css">
+  <script src="/debug/static/theme.js"></script>
 </head>
 <body>
   <header>
     <h1>AMC Debug Console</h1>
     <div class="actions">
-      <span class="freshness" id="runtimeFreshness">runtime live</span>
-      <span class="freshness" id="scenarioCatalogFreshness">catalog pending</span>
-      <span class="muted" id="clock">--</span>
+      <span class="freshness lamp queued" id="runtimeFreshness"><span class="g" aria-hidden="true">◌</span>runtime pending</span>
+      <span class="freshness lamp queued" id="scenarioCatalogFreshness"><span class="g" aria-hidden="true">◌</span>catalog pending</span>
+      <span class="muted clock" id="clock">--</span>
     </div>
   </header>
   <main>
@@ -304,7 +67,7 @@ DEBUG_HTML = r"""<!doctype html>
           <div class="metric"><div class="label">Scenarios</div><div class="value" id="scenarioCount">0</div></div>
           <div class="metric"><div class="label">Anomalies</div><div class="value" id="anomalyCount">0</div></div>
           <div class="metric"><div class="label">Commands</div><div class="value" id="commandCount">0</div></div>
-          <div class="metric"><div class="label">Unsupported</div><div class="value" id="unsupportedCount">0</div></div>
+          <div class="metric" id="unsupportedMetric"><div class="label">Unsupported <span id="unsupportedGlyph" aria-hidden="true"></span></div><div class="value" id="unsupportedCount">0</div></div>
           <div class="metric"><div class="label">Generations</div><div class="value" id="generationCount">0</div></div>
           <div class="metric"><div class="label">Mutations</div><div class="value" id="mutationVersion">0</div></div>
         </div>
@@ -319,7 +82,7 @@ DEBUG_HTML = r"""<!doctype html>
             <tbody id="mutationDetails"></tbody>
           </table>
         </div>
-        <table>
+        <table class="rows">
           <thead><tr><th>Workload Overlay</th><th style="width:95px">Replicas</th><th style="width:130px">Status</th><th style="width:170px">Updated</th></tr></thead>
           <tbody id="workloadMutations"></tbody>
         </table>
@@ -368,14 +131,14 @@ DEBUG_HTML = r"""<!doctype html>
             <button type="button" class="secondary small" id="exportUnsupportedCsv">Unsupported CSV</button>
           </div>
         </div>
-        <table>
+        <table class="rows">
           <thead><tr><th style="width:105px">Type</th><th style="width:170px">When</th><th>Subject</th><th>Detail</th></tr></thead>
           <tbody id="timelineRows"></tbody>
         </table>
       </section>
       <section>
         <div class="bar"><h2>Resource Diffs</h2><span class="muted">baseline / overlay</span></div>
-        <table>
+        <table class="rows">
           <thead><tr><th style="width:120px">Kind</th><th>Resource</th><th>Overlay</th><th>Detail</th></tr></thead>
           <tbody id="resourceDiffs"></tbody>
         </table>
@@ -386,7 +149,7 @@ DEBUG_HTML = r"""<!doctype html>
           <input id="commandInput" value="kubectl get pods -n saas-prod">
           <button type="submit">Run</button>
         </form>
-        <table>
+        <table class="rows">
           <thead><tr><th style="width:70px">ID</th><th>Command</th><th style="width:125px">Status</th><th style="width:110px">Exit</th></tr></thead>
           <tbody id="commands"></tbody>
         </table>
@@ -394,7 +157,7 @@ DEBUG_HTML = r"""<!doctype html>
       </section>
       <section>
         <div class="bar"><h2>Resources</h2><span class="muted" id="resourceCount">0 resources</span></div>
-        <table>
+        <table class="rows">
           <thead><tr><th>Name</th><th>Status</th><th>Signal</th><th>Scenario</th></tr></thead>
           <tbody id="resourcesTable"></tbody>
         </table>
@@ -420,21 +183,21 @@ DEBUG_HTML = r"""<!doctype html>
           </select>
           <button type="submit">Search</button>
         </form>
-        <table>
+        <table class="rows">
           <thead><tr><th>Command</th><th style="width:112px">Status</th></tr></thead>
           <tbody id="searchResults"></tbody>
         </table>
       </section>
       <section>
         <div class="bar"><h2>Unsupported Explorer</h2><span class="muted">grouped</span></div>
-        <table>
+        <table class="rows">
           <thead><tr><th>Fingerprint</th><th style="width:70px">Count</th><th style="width:92px">Test</th></tr></thead>
           <tbody id="unsupported"></tbody>
         </table>
       </section>
       <section>
         <div class="bar"><h2>Active Profiles</h2><span class="muted">scenario overlays</span></div>
-        <table>
+        <table class="rows">
           <thead><tr><th>Scenario</th><th>Summary</th></tr></thead>
           <tbody id="profiles"></tbody>
         </table>
@@ -442,7 +205,7 @@ DEBUG_HTML = r"""<!doctype html>
       <section>
         <div class="bar"><h2>Scenario Catalog</h2><span class="muted" id="scenarioCatalogCount">0 scenarios</span></div>
         <div class="scenario-shell">
-          <table>
+          <table class="rows">
             <thead><tr><th>Scenario</th><th style="width:88px">Severity</th><th style="width:110px">Days</th></tr></thead>
             <tbody id="scenarios"></tbody>
           </table>
@@ -451,14 +214,22 @@ DEBUG_HTML = r"""<!doctype html>
       </section>
       <section>
         <div class="bar"><h2>Recent Events</h2><span class="muted">cluster</span></div>
-        <table>
+        <table class="rows">
           <thead><tr><th>Reason</th><th>Namespace</th><th>Object</th><th>Message</th></tr></thead>
           <tbody id="events"></tbody>
         </table>
       </section>
     </div>
   </main>
-  <aside class="drawer" id="resourceDrawer">
+  <footer>
+    <span class="muted">Theme</span>
+    <div class="segmented" role="group" aria-label="Theme">
+      <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-choice="system" aria-pressed="false">System</button>
+    </div>
+  </footer>
+  <aside class="drawer" id="resourceDrawer" aria-labelledby="resourceDrawerTitle">
     <div class="drawer-head">
       <h2 id="resourceDrawerTitle">Resource</h2>
       <button type="button" class="secondary small" id="closeResourceDrawer">Close</button>
@@ -571,11 +342,20 @@ DEBUG_HTML = r"""<!doctype html>
       const body = rows.map((row) => columns.map((column) => csvCell(column.value(row))).join(",")).join("\n");
       downloadBlob(filename, `${header}\n${body}${body ? "\n" : ""}`, "text/csv");
     }
+    const GLYPHS = {ok: "●", caution: "▲", warning: "■", queued: "◌", unknown: "▨"};
     function statusClass(status) {
-      return status === "supported" ? "supported" : status === "partial" ? "partial" : "unsupported";
+      return status === "supported" ? "ok" : status === "partial" ? "caution" : "warning";
     }
     function severityClass(severity) {
-      return severity === "high" ? "unsupported" : severity === "medium" ? "partial" : "supported";
+      return severity === "high" ? "warning" : severity === "medium" ? "caution" : "ok";
+    }
+    function lamp(state, text) {
+      return `<span class="lamp ${state}"><span class="g" aria-hidden="true">${GLYPHS[state]}</span>${esc(text)}</span>`;
+    }
+    function setFreshness(id, state, text) {
+      const el = $(id);
+      el.className = `freshness lamp ${state}`;
+      el.innerHTML = `<span class="g" aria-hidden="true">${GLYPHS[state]}</span>${esc(text)}`;
     }
     function valueOrDash(value) {
       return value === undefined || value === null || value === "" ? "-" : value;
@@ -672,18 +452,20 @@ DEBUG_HTML = r"""<!doctype html>
       renderResourceDiffs(latestState, latestResources);
     }
     function selectScenario(id) {
+      const inCatalog = Boolean(document.activeElement?.closest("#scenarios"));
       selectedScenarioId = id;
       renderScenarioCatalog(scenarioCatalog);
+      if (inCatalog) document.querySelector(`#scenarios tr[data-id="${CSS.escape(id)}"]`)?.focus();
     }
     function renderCommands(items) {
       const filters = activeFilters();
       const visible = items.filter((item) => matchesCommandFilters(item, filters));
       $("commands").innerHTML = visible.map((item) => `
-        <tr data-id="${item.id}">
-          <td>${item.id}</td>
+        <tr data-id="${item.id}" tabindex="0">
+          <td class="num">${item.id}</td>
           <td><code>${esc(item.raw_input)}</code><div class="muted">${esc(item.matched_rule_id)}</div></td>
-          <td><span class="status ${statusClass(item.support_status)}">${esc(item.support_status)}</span></td>
-          <td>${item.exit_code}</td>
+          <td>${lamp(statusClass(item.support_status), item.support_status)}</td>
+          <td class="num">${item.exit_code}</td>
         </tr>`).join("");
       document.querySelectorAll("#commands tr").forEach((row) => {
         row.addEventListener("click", async () => {
@@ -694,7 +476,7 @@ DEBUG_HTML = r"""<!doctype html>
     }
     function renderState(state) {
       $("clock").textContent = `${state.clock.simulated_time} @ ${state.clock.speedup}x`;
-      $("runtimeFreshness").textContent = `runtime live ${new Date().toLocaleTimeString()}`;
+      setFreshness("runtimeFreshness", "ok", `runtime read ${new Date().toLocaleTimeString()}`);
       const otelText = state.otel.enabled ? `OTEL ${state.otel.thread}` : "OTEL off";
       const generationText = state.generation.enabled
         ? `generation ${state.generation.thread}`
@@ -704,6 +486,9 @@ DEBUG_HTML = r"""<!doctype html>
       $("anomalyCount").textContent = state.anomaly_count;
       $("commandCount").textContent = state.command_trace_count;
       $("unsupportedCount").textContent = state.unsupported_group_count;
+      const unsupportedState = state.unsupported_group_count > 0 ? "caution" : "";
+      $("unsupportedMetric").dataset.state = unsupportedState;
+      $("unsupportedGlyph").textContent = unsupportedState ? GLYPHS[unsupportedState] : "";
       $("generationCount").textContent = state.generation.generation_count;
       $("mutationVersion").textContent = state.mutations.version;
       renderMiniCharts(state);
@@ -733,7 +518,7 @@ DEBUG_HTML = r"""<!doctype html>
       ]);
       renderWorkloadMutations(state.mutations.workloads || {});
       $("profiles").innerHTML = state.profiles.map((item) => `
-        <tr data-id="${esc(item.scenario_id)}"><td>${esc(item.scenario_id)}</td><td>${esc(item.summary)}</td></tr>
+        <tr data-id="${esc(item.scenario_id)}" tabindex="0"><td>${esc(item.scenario_id)}</td><td>${esc(item.summary)}</td></tr>
       `).join("");
       document.querySelectorAll("#profiles tr").forEach((row) => {
         row.addEventListener("click", () => selectScenario(row.dataset.id));
@@ -744,9 +529,9 @@ DEBUG_HTML = r"""<!doctype html>
       $("workloadMutations").innerHTML = entries.length ? entries.map(([name, mutation]) => `
         <tr>
           <td>${esc(name)}</td>
-          <td>${esc(valueOrDash(mutation.replicas))}</td>
+          <td class="num">${esc(valueOrDash(mutation.replicas))}</td>
           <td>${esc(valueOrDash(mutation.deployment_status || mutation.pod_status))}</td>
-          <td>${esc(valueOrDash(mutation.updated_at))}</td>
+          <td class="num">${esc(valueOrDash(mutation.updated_at))}</td>
         </tr>
       `).join("") : `<tr><td colspan="4" class="muted">none</td></tr>`;
     }
@@ -783,10 +568,10 @@ DEBUG_HTML = r"""<!doctype html>
       const rows = sourceRows.filter((row) => matchesResourceFilters(selectedKind, row, {...filters, kind: selectedKind}));
       $("resourceCount").textContent = `${rows.length} ${selectedKind}`;
       $("resourcesTable").innerHTML = rows.length ? rows.map((row) => `
-        <tr class="resource-row" data-kind="${esc(selectedKind)}" data-name="${esc(row.name || row.object || row.reason || "")}" data-namespace="${esc(row.namespace || "")}">
+        <tr class="resource-row" tabindex="0" data-kind="${esc(selectedKind)}" data-name="${esc(row.name || row.object || row.reason || "")}" data-namespace="${esc(row.namespace || "")}">
           <td>${esc(row.name || row.object || row.reason)}<div class="muted">${esc(row.namespace || "-")}</div></td>
           <td>${esc(row.status || row.deployment_status || row.type || "-")}</td>
-          <td>${esc(row.restarts ?? row.ready ?? row.count ?? row.revision ?? "-")}</td>
+          <td class="num">${esc(row.restarts ?? row.ready ?? row.count ?? row.revision ?? "-")}</td>
           <td>${esc((row.scenario_ids || []).join(", "))}</td>
         </tr>`).join("") : `<tr><td colspan="4" class="muted">none</td></tr>`;
       document.querySelectorAll("#resourcesTable tr.resource-row").forEach((row) => {
@@ -802,7 +587,7 @@ DEBUG_HTML = r"""<!doctype html>
       $("unsupported").innerHTML = items.map((item, index) => `
         <tr>
           <td>${esc(item.fingerprint)}<div class="muted">${esc(item.guessed_intent)}</div></td>
-          <td>${item.count}</td>
+          <td class="num">${item.count}</td>
           <td><button type="button" class="secondary small" data-promote="${index}">Copy</button></td>
         </tr>`).join("");
       document.querySelectorAll("#unsupported button[data-promote]").forEach((button) => {
@@ -823,9 +608,9 @@ DEBUG_HTML = r"""<!doctype html>
       const backend = payload.search_backend ? ` via ${payload.search_backend}` : "";
       $("searchCount").textContent = `${total} match${total === 1 ? "" : "es"}${backend}`;
       $("searchResults").innerHTML = items.map((item) => `
-        <tr data-id="${item.id}">
+        <tr data-id="${item.id}" tabindex="0">
           <td><code>${esc(item.raw_input)}</code><div class="muted">${esc(item.fingerprint)}</div></td>
-          <td><span class="status ${statusClass(item.support_status)}">${esc(item.support_status)}</span></td>
+          <td>${lamp(statusClass(item.support_status), item.support_status)}</td>
         </tr>`).join("");
       document.querySelectorAll("#searchResults tr").forEach((row) => {
         row.addEventListener("click", async () => {
@@ -886,7 +671,7 @@ DEBUG_HTML = r"""<!doctype html>
       $("timelineRows").innerHTML = rows.length ? rows.map((row) => `
         <tr>
           <td><span class="timeline-kind">${esc(row.type)}</span></td>
-          <td>${esc(valueOrDash(row.when))}</td>
+          <td class="num">${esc(valueOrDash(row.when))}</td>
           <td>${esc(row.subject)}</td>
           <td>${esc(row.detail)}</td>
         </tr>
@@ -996,22 +781,22 @@ DEBUG_HTML = r"""<!doctype html>
       const known = payload.known || [];
       const active = new Set(payload.active || []);
       $("scenarioCatalogCount").textContent = `${known.length} scenario${known.length === 1 ? "" : "s"}`;
-      $("scenarioCatalogFreshness").textContent = `catalog cached ${known.length}`;
+      setFreshness("scenarioCatalogFreshness", "ok", `catalog cached ${known.length}`);
       if (!selectedScenarioId || !known.some((item) => item.id === selectedScenarioId)) {
         selectedScenarioId = known.find((item) => active.has(item.id))?.id || known[0]?.id || "";
       }
       $("scenarios").innerHTML = known.map((item) => `
-        <tr data-id="${esc(item.id)}" class="${item.id === selectedScenarioId ? "selected" : ""}">
+        <tr data-id="${esc(item.id)}" tabindex="0" class="${item.id === selectedScenarioId ? "selected" : ""}">
           <td>
             <strong>${esc(item.id)}</strong>
             <div class="muted">${esc(item.name)}</div>
             <div class="muted">${esc((item.components_touched || []).join(", "))}</div>
           </td>
           <td>
-            <span class="status ${severityClass(item.severity)}">${esc(item.severity)}</span>
+            ${lamp(severityClass(item.severity), item.severity)}
             ${active.has(item.id) ? `<div class="muted">active</div>` : ""}
           </td>
-          <td>${esc(item.days_required)}</td>
+          <td class="num">${esc(item.days_required)}</td>
         </tr>
       `).join("");
       document.querySelectorAll("#scenarios tr").forEach((row) => {
@@ -1030,8 +815,8 @@ DEBUG_HTML = r"""<!doctype html>
         <tr>
           <td>${esc(spec.component)}<div class="muted">${esc(spec.metric)}</div></td>
           <td>${esc(spec.description)}</td>
-          <td>${esc(formatOffset(spec.time_offset_seconds))}</td>
-          <td>${esc(formatSeconds(spec.duration_seconds))}</td>
+          <td class="num">${esc(formatOffset(spec.time_offset_seconds))}</td>
+          <td class="num">${esc(formatSeconds(spec.duration_seconds))}</td>
         </tr>
       `).join("");
     }
@@ -1062,7 +847,7 @@ DEBUG_HTML = r"""<!doctype html>
             <h3>${esc(item.name)}</h3>
             <div class="muted">${esc(item.id)} - ${esc(item.category)} - ${esc((item.components_touched || []).join(", "))}</div>
           </div>
-          <span class="status ${severityClass(item.severity)}">${esc(item.severity)}</span>
+          ${lamp(severityClass(item.severity), item.severity)}
         </div>
         <div class="detail-grid">
           <table>
@@ -1083,12 +868,12 @@ DEBUG_HTML = r"""<!doctype html>
           </table>
         </div>
         <div class="scenario-section-title">Primary Signals</div>
-        <table>
+        <table class="rows">
           <thead><tr><th>Component / Metric</th><th>Description</th><th style="width:80px">Offset</th><th style="width:90px">Duration</th></tr></thead>
           <tbody>${renderSpecRows(item.primary_specs || [])}</tbody>
         </table>
         <div class="scenario-section-title">Cascade Signals</div>
-        <table>
+        <table class="rows">
           <thead><tr><th>Component / Metric</th><th>Description</th><th style="width:80px">Offset</th><th style="width:90px">Duration</th></tr></thead>
           <tbody>${renderSpecRows(item.cascade_specs || [])}</tbody>
         </table>
@@ -1097,7 +882,7 @@ DEBUG_HTML = r"""<!doctype html>
         <div class="scenario-section-title">Ops Logs</div>
         <table><tbody>${renderStringRows(profile.logs || [])}</tbody></table>
         <div class="scenario-section-title">Kubernetes Impacts</div>
-        <table>
+        <table class="rows">
           <thead><tr><th>Component</th><th>Status</th><th>Pod</th><th>Ready</th></tr></thead>
           <tbody>${renderImpactRows(profile.impacts || [])}</tbody>
         </table>
@@ -1115,6 +900,11 @@ DEBUG_HTML = r"""<!doctype html>
       renderSearch(payload);
     }
     async function refresh() {
+      if (document.activeElement?.matches("tr[tabindex]:focus-visible")) {
+        // A redraw would drop the row the keyboard is on; say so instead of reading on.
+        setFreshness("runtimeFreshness", "queued", "runtime paused while a row has focus");
+        return;
+      }
       try {
         const [state, commands, unsupported, resources, scenarios] = await Promise.all([
           getJSON("/v1/state"),
@@ -1137,6 +927,7 @@ DEBUG_HTML = r"""<!doctype html>
         await runSearch();
         $("lastRefresh").textContent = new Date().toLocaleTimeString();
       } catch (error) {
+        setFreshness("runtimeFreshness", "unknown", `runtime unread: ${error}`);
         $("details").textContent = String(error);
       }
     }
@@ -1184,6 +975,29 @@ DEBUG_HTML = r"""<!doctype html>
         {label: "guessed_intent", value: (row) => row.guessed_intent},
         {label: "example", value: (row) => (row.examples || [])[0]?.raw_input || ""},
       ]);
+    });
+    function labelCells() {
+      document.querySelectorAll("table.rows").forEach((table) => {
+        const heads = [...table.querySelectorAll("thead th")].map((th) => th.textContent);
+        table.querySelectorAll("tbody tr").forEach((row) => {
+          if (row.children.length !== heads.length) return;
+          [...row.children].forEach((cell, index) => cell.setAttribute("data-label", heads[index]));
+        });
+      });
+    }
+    let labelQueued = false;
+    new MutationObserver(() => {
+      if (labelQueued) return;
+      labelQueued = true;
+      requestAnimationFrame(() => { labelQueued = false; labelCells(); });
+    }).observe(document.body, {childList: true, subtree: true});
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") $("resourceDrawer").classList.remove("open");
+      const row = event.target.closest?.("tr[tabindex]");
+      if (row && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        row.click();
+      }
     });
     bootstrapAuthToken();
     refresh();
