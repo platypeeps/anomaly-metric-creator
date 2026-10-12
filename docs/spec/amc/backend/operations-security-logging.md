@@ -338,10 +338,16 @@ gauges-only streaming starts it fresh, and verbose request bodies are gated by
 
 ## Debug UI
 
-The debug UI is inline HTML/CSS/JS served from `server_debug_ui.py`/`GET
-/debug` to avoid a frontend build chain. The static shell may be accessible
-without bearer auth, but data requests must attach the token when auth is
-enabled. Sources: `README.md`;
+The debug UI is an inline HTML/JS shell served from `server_debug_ui.py`/`GET
+/debug` to avoid a frontend build chain. Its look lives in `debug_static/`,
+served from `GET /debug/static/*`: `tokens.css` and `theme.js` are copies of the
+shared design foundation (never edited here), `fonts.css` and `fonts/` carry
+self-hosted IBM Plex, and `debug.css` names no colour of its own
+(`tests/test_debug_ui_foundation.py` fails a hex, `rgb()` or similar literal
+outside `tokens.css`). State shows a glyph beside its colour, and a failed read
+shows as unknown with its reason. The static shell and `/debug/static/*` may be
+accessible without bearer auth, but data requests must attach the token when
+auth is enabled; eval mode hides both. Sources: `README.md`;
 `src/anomaly_metric_creator/server_debug_ui.py`;
 `src/anomaly_metric_creator/server.py`; `tests/test_server.py`.
 

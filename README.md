@@ -476,7 +476,7 @@ By default the server binds loopback. Binding a non-loopback host such as
 `0.0.0.0` requires `--auth-token` unless
 `--allow-remote-without-auth` is passed explicitly. Health probes
 (`/healthz` and `/readyz`) and the static debug console shell (`/debug` and
-`/`) remain unauthenticated; every JSON/debug data endpoint and the Kubernetes
+`/`, with its `/debug/static/*` stylesheet, script and fonts) remain unauthenticated; every JSON/debug data endpoint and the Kubernetes
 facade require `Authorization: Bearer TOKEN` when a token is configured.
 `/readyz` is a real readiness check: it returns `200 {"ready": true}` only when
 every artifact the run declared it would emit is present on disk **and** the
@@ -541,7 +541,7 @@ eval mode hides. Read the persisted store offline with `amc trace-bundle`
 Eval mode returns `404` for every ground-truth-bearing surface — the anomaly
 manifest (`/v1/anomalies`), the scenario catalog (`/v1/scenarios`), `/v1/state`
 (which names active scenarios and anomaly counts), the whole `/v1/debug/*`
-console and its UI shell (`/`, `/debug`), and `/v1/logs/stream` — while keeping
+console and its UI shell (`/`, `/debug`, `/debug/static/*`), and `/v1/logs/stream` — while keeping
 the kubectl/Helm/commands investigation surface open. It also disables the MCP
 `get_logs`/`deduplicate_logs` tools, because this project's `metric_report.log`
 is a verbatim rendering of the anomaly manifest (same descriptions and event
@@ -582,7 +582,8 @@ Primary endpoints:
 
 | Endpoint | Purpose |
 | -------- | ------- |
-| `GET /debug` | Browser debug console shell. Data requests still use bearer auth when configured. |
+| `GET /debug` | Browser debug console shell, with a Dark, Light or System theme control. Data requests still use bearer auth when configured. |
+| `GET /debug/static/*` | The console's stylesheet, theme script and self-hosted IBM Plex fonts; no data, so no bearer token. |
 | `GET /v1/kubeconfig` | Kubeconfig that points stock `kubectl` and `helm` clients at this simulator. |
 | `POST /v1/commands` | Execute a simulated command. Body accepts `{"command": "kubectl get pods -n saas-prod"}` or `{"argv": [...]}`. |
 | `GET /version`, `/api`, `/apis/...`, `/openapi/v2`, `/openapi/v3/...` | Kubernetes-compatible discovery, schema, resource, log, metrics, and Helm release Secret APIs for real clients. |

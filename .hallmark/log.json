@@ -1,0 +1,15 @@
+[
+  {
+    "date": "2026-10-12",
+    "artifact": "src/anomaly_metric_creator/server_debug_ui.py (DEBUG_HTML) with debug_static/debug.css",
+    "scope": "page",
+    "genre": "modern-minimal",
+    "theme": "platypeeps foundation tokens (debug_static/tokens.css, copied unchanged), IBM Plex self-hosted",
+    "macrostructure": "operations console: header lamps, two stacks of ledger panels, evidence drawer, footer theme control",
+    "nav": "none (single console page)",
+    "footer": "settings strip with the Dark, Light, System control",
+    "changes": "sd:3587 adopt: tokens, theme.js, Plex from /debug/static, glyph state grammar, unknown on a failed read, keyboard rows, stacked rows below 700px",
+    "constraints": "inline body and script stay (tests slice the script); no build step; page is served without a CSP",
+    "critique": "P4 H4 E4 S4 R4 V3"
+  }
+]

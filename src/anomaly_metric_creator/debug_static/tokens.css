@@ -1,0 +1,115 @@
+/* Hallmark · route: custom (bespoke) · structure: rail + annunciator + ranked ledger + evidence drawer · idea: "dark cockpit"
+ * paper: dark oklch(17% 0.014 250) / light oklch(96% 0.006 250) · accent: cyan oklch(78% 0.11 210) / oklch(52% 0.115 215)
+ * display: IBM Plex Sans · body: IBM Plex Sans · data: IBM Plex Mono · icons: Lucide
+ * axes: dark / grotesk-sans / cool · gates: pass (see products/system/README.md § Slop test) · studied: no
+ *
+ * Instrument-panel foundation tokens. The default for personal dashboards,
+ * development and tracking UIs (see principles.md). Copy this file; do not
+ * restate its values inline.
+ *
+ * Theme: dark by default. Every colour token is light-dark(LIGHT, DARK), so
+ * one list names both palettes. `color-scheme` picks the side:
+ *   <html>                     dark (default)
+ *   <html data-theme="dark">   dark
+ *   <html data-theme="light">  light
+ *   <html data-theme="system"> follows the OS
+ * theme.js sets the attribute from the viewer's stored choice.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces: blue-grey paper, raised panel, recessed well. */
+  --color-paper:     light-dark(oklch(96%   0.006 250), oklch(17%   0.014 250));
+  --color-panel:     light-dark(oklch(98.6% 0.004 250), oklch(20.5% 0.016 250));
+  --color-well:      light-dark(oklch(93%   0.008 250), oklch(14.5% 0.013 250));
+  --color-rule:      light-dark(oklch(84%   0.010 250), oklch(33%   0.018 250));
+  --color-rule-2:    light-dark(oklch(90%   0.008 250), oklch(26%   0.016 250));
+
+  /* Text. */
+  --color-ink:       light-dark(oklch(21%   0.014 255), oklch(93%   0.010 250));
+  --color-ink-2:     light-dark(oklch(38%   0.014 255), oklch(80%   0.014 250));
+  --color-muted:     light-dark(oklch(49%   0.014 250), oklch(68%   0.018 250));
+
+  /* Accent: cyan, the avionics colour for "selected". Selection, focus, live only. */
+  --color-accent:     light-dark(oklch(52%  0.115 215), oklch(78%  0.11  210));
+  --color-accent-bg:  light-dark(oklch(92%  0.035 210), oklch(29%  0.05  220));
+  --color-accent-ink: light-dark(oklch(97%  0.005 210), oklch(17%  0.014 250));
+  --color-focus:      light-dark(oklch(55%  0.19  215), oklch(80%  0.15  210));
+  --color-scrim:      light-dark(oklch(21%  0.014 255 / 0.28), oklch(8% 0.012 250 / 0.6));
+
+  /* State: the only other hues on the screen. Lamp = fill, text = on paper. */
+  --color-ok:               light-dark(oklch(52% 0.12 150), oklch(76% 0.13 150));
+  --color-ok-lamp:          light-dark(oklch(90% 0.06 150), oklch(32% 0.06 150));
+  --color-caution:          light-dark(oklch(50% 0.11 70),  oklch(82% 0.13 85));
+  --color-caution-lamp:     light-dark(oklch(89% 0.10 85),  oklch(31% 0.06 75));
+  --color-caution-lamp-ink: light-dark(oklch(24% 0.02 70),  oklch(86% 0.12 85));
+  --color-warning:          light-dark(oklch(50% 0.19 25),  oklch(70% 0.17 25));
+  --color-warning-lamp:     light-dark(oklch(50% 0.19 25),  oklch(50% 0.17 25));
+  --color-warning-ink:      light-dark(oklch(97% 0.01 25),  oklch(97% 0.01 25));
+  --color-unknown:          light-dark(oklch(49% 0.014 250), oklch(68% 0.018 250));
+  --color-hatch:            light-dark(oklch(80% 0.010 250), oklch(38% 0.016 250));
+
+  /* Charts: neutral series; state and accent keep their meaning (patterns.md § Charts). */
+  --color-series-1:  light-dark(oklch(38%   0.014 255), oklch(84%   0.014 250));
+  --color-series-2:  light-dark(oklch(58%   0.014 250), oklch(62%   0.018 250));
+  --color-series-3:  light-dark(oklch(76%   0.010 250), oklch(42%   0.016 250));
+  --color-grid:      var(--color-rule-2);
+
+  /* Type: two registers. */
+  --font-ui:    "IBM Plex Sans", ui-sans-serif, sans-serif;
+  --font-label: "IBM Plex Sans Condensed", "IBM Plex Sans", ui-sans-serif, sans-serif;
+  --font-data:  "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Scale: minor third (1.2) from 16px; data rows sit at --text-sm. */
+  --text-2xs: 0.694rem;
+  --text-xs:  0.75rem;
+  --text-sm:  0.875rem;
+  --text-base:1rem;
+  --text-md:  1.2rem;
+  --text-lg:  1.44rem;
+  --text-xl:  1.728rem;
+  --text-2xl: 2.074rem;
+
+  /* Space: 4pt. */
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs:  0.5rem;
+  --space-sm:  0.75rem;
+  --space-md:  1rem;
+  --space-lg:  1.5rem;
+  --space-xl:  2rem;
+  --space-2xl: 3rem;
+  --space-3xl: 4rem;
+
+  --row:        2.25rem;   /* desktop data row */
+  --row-touch:  2.75rem;   /* 44px: any row that is a control on touch */
+  --rail:       13.5rem;
+  --drawer:     26rem;
+  --bulk-bar:   3.5rem;    /* sticky bulk-action bar */
+
+  /* Icons: Lucide, stroked in currentColor. */
+  --icon-sm:     1rem;     /* inline with --text-sm, help icons */
+  --icon-md:     1.25rem;  /* buttons, row actions */
+  --icon-stroke: 1.75;
+
+  --rule-hair:  1px;
+  --rule-lamp:  3px;
+  --radius-sm:  3px;
+  --radius-md:  5px;
+
+  /* Shadows: only a floating layer casts one (popover, menu, toast, bulk bar, dialog; the bottom sheet casts upward). */
+  --shadow-overlay: 0 8px 24px oklch(0% 0 0 / 0.3);
+  --shadow-sheet:   0 -8px 32px oklch(0% 0 0 / 0.35);
+
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in:     cubic-bezier(0.64, 0, 0.78, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast:  120ms;
+  --dur-base:  180ms;
+  --dur-lamp:  420ms;
+  --delay-help: 600ms;     /* hover preview of a help popover; focus and tap show at once */
+}
+
+:root[data-theme="light"]  { color-scheme: light; }
+:root[data-theme="system"] { color-scheme: light dark; }

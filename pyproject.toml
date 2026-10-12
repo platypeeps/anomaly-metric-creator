@@ -41,6 +41,10 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The /debug console's stylesheet, theme script and IBM Plex faces.
+[tool.setuptools.package-data]
+anomaly_metric_creator = ["debug_static/*", "debug_static/fonts/*"]
+
 [project.optional-dependencies]
 # Optional runtime extra: enables YAML --instance-config files
 # (.yaml/.yml). JSON --instance-config works without this extra.
