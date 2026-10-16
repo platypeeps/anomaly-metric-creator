@@ -485,7 +485,6 @@ docs/
   application-flow.md
   DEVELOPMENT_CYCLE.md
   REVIEW_PATTERNS.md
-  review-learnings.md
   topology.md
 scripts/
   check-review-preflight.mjs
