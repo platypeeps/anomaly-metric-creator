@@ -58,7 +58,6 @@ Generated metadata-only repository map for anomaly-metric-creator. This artifact
   copilot-instructions.md
   dependabot.yml
   PULL_REQUEST_TEMPLATE.md
-  sd-review.json
 .prism/
   rules.json
   rules.schema.json
